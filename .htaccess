@@ -1,0 +1,62 @@
+# جلوگیری از فهرست‌بندی پوشه‌ها
+Options -Indexes
+
+# مسدود کردن دسترسی مستقیم از طریق مرورگر
+Order Allow,Deny
+Deny from all
+
+# مسدود کردن دسترسی به فایل‌های حساس
+<FilesMatch "\.(json|log|txt|md|bak|sql)$">
+    Require all denied
+</FilesMatch>
+
+# غیرفعال کردن اجرای PHP در این پوشه
+<FilesMatch "\.ph(p|tml)$">
+    Require all denied
+</FilesMatch>
+
+# تنظیمات Rewrite برای مسیریابی
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+    
+    # اگر فایل یا پوشه واقعی است، سرو شود
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    
+    # در غیر این صورت به index.php هدایت شود
+    RewriteRule ^(.*)$ public/index.php?url=$1 [QSA,L]
+</IfModule>
+
+# هدرهای امنیتی
+<IfModule mod_headers.c>
+    # جلوگیری از کلیک‌جکینگ
+    Header always set X-Frame-Options "SAMEORIGIN"
+    
+    # محافظت در برابر MIME sniffing
+    Header always set X-Content-Type-Options "nosniff"
+    
+    # فعال کردن XSS Filter
+    Header always set X-XSS-Protection "1; mode=block"
+    
+    # سیاست ارجاع دهنده سخت‌گیرانه
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# کشیدن فایل‌های استاتیک
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType image/jpg "access plus 1 year"
+    ExpiresByType image/jpeg "access plus 1 year"
+    ExpiresByType image/png "access plus 1 year"
+    ExpiresByType image/gif "access plus 1 year"
+    ExpiresByType image/webp "access plus 1 year"
+    ExpiresByType text/css "access plus 1 month"
+    ExpiresByType application/javascript "access plus 1 month"
+    ExpiresByType application/pdf "access plus 1 month"
+</IfModule>
+
+# فشرده‌سازی Gzip
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css application/javascript application/json
+</IfModule>

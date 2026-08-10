@@ -1,0 +1,16 @@
+# جلوگیری از فهرست‌بندی پوشه‌ها
+Options -Indexes
+
+# مسدود کردن دسترسی مستقیم از طریق مرورگر
+Order Allow,Deny
+Deny from all
+
+# مسدود کردن دسترسی به فایل‌های حساس
+<FilesMatch "\.(json|log|txt|md|bak|sql)$">
+    Require all denied
+</FilesMatch>
+
+# غیرفعال کردن اجرای PHP در این پوشه
+<FilesMatch "\.ph(p|tml)$">
+    Require all denied
+</FilesMatch>

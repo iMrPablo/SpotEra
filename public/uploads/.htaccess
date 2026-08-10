@@ -1,0 +1,21 @@
+# جلوگیری از فهرست‌بندی پوشه‌ها
+Options -Indexes
+
+# مسدود کردن دسترسی مستقیم به فایل‌های آپلودشده
+Order Allow,Deny
+Deny from all
+
+# اجازه دسترسی فقط به فایل‌های تصویری و ویدیویی
+<FilesMatch "\.(jpg|jpeg|png|gif|webp|mp4|webm)$">
+    Require all granted
+</FilesMatch>
+
+# غیرفعال کردن اجرای PHP در این پوشه
+<FilesMatch "\.ph(p|tml)$">
+    Require all denied
+</FilesMatch>
+
+# جلوگیری از اجرای فایل‌های اجرایی
+<FilesMatch "\.(sh|bash|exe|bat|cmd)$">
+    Require all denied
+</FilesMatch>

@@ -1,0 +1,16 @@
+# جلوگیری از فهرست‌بندی پوشه‌ها
+Options -Indexes
+
+# مسدود کردن دسترسی مستقیم به فایل‌های آواتار
+Order Allow,Deny
+Deny from all
+
+# اجازه دسترسی فقط به فایل‌های تصویری
+<FilesMatch "\.(jpg|jpeg|png|gif|webp)$">
+    Require all granted
+</FilesMatch>
+
+# غیرفعال کردن اجرای PHP در این پوشه
+<FilesMatch "\.ph(p|tml)$">
+    Require all denied
+</FilesMatch>
