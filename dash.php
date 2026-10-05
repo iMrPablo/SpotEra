@@ -14,6 +14,7 @@ define('CONFIG_FILE', DATA_DIR . '/config.json');
 define('CHATS_FILE', DATA_DIR . '/chats.json');
 define('READS_FILE', DATA_DIR . '/reads.json');
 define('WALLET_CONFIG_FILE', DATA_DIR . '/wallet_config.json');
+define('WALLET_TX_FILE', DATA_DIR . '/wallet_transactions.json');
 define('UPLOADS_DIR', DATA_DIR . '/uploads');
 define('AVATARS_DIR', DATA_DIR . '/avatars');
 define('NORMAL_MAX_UPLOAD_MB', 200);
@@ -40,6 +41,27 @@ function get_wallet_config() {
     }
     $data = read_json(WALLET_CONFIG_FILE);
     return !empty($data) ? $data : ['spc_to_toman' => 1000];
+}
+function add_wallet_tx($user_id, $type, $amount, $meta = []) {
+    if ($user_id === '' || $user_id === null) return;
+    $txs = read_json(WALLET_TX_FILE);
+    $tx = array_merge([
+        'id' => generate_id(),
+        'user_id' => $user_id,
+        'type' => $type,
+        'amount' => (int)$amount,
+        'created_at' => time(),
+    ], $meta);
+    $txs[] = $tx;
+    if (count($txs) > 5000) $txs = array_slice($txs, -5000);
+    write_json(WALLET_TX_FILE, $txs);
+}
+function get_wallet_txs($user_id, $limit = 200) {
+    $txs = read_json(WALLET_TX_FILE);
+    $mine = [];
+    foreach ($txs as $t) { if (($t['user_id'] ?? '') === $user_id) $mine[] = $t; }
+    usort($mine, fn($a, $b) => ($b['created_at'] ?? 0) <=> ($a['created_at'] ?? 0));
+    return array_slice($mine, 0, $limit);
 }
 function safe_user($u) {
     $premium = is_premium_user($u);
@@ -800,7 +822,14 @@ if (isset($_GET['action'])) {
             }
             unset($u);
             if ($changed) write_json(USERS_FILE, $users);
+            add_wallet_tx($user['id'], 'out', $amount, ['with_username' => $target['username'], 'with_name' => $target['name'] ?? '', 'note' => trim($_POST['note'] ?? '')]);
+            add_wallet_tx($target['id'], 'in', $amount, ['with_username' => $user['username'], 'with_name' => $user['name'] ?? '', 'note' => trim($_POST['note'] ?? '')]);
             echo json_encode(['success' => true, 'new_balance' => ($user['wallet_balance'] ?? 0) - $amount, 'message' => 'انتقال ' . $amount . ' SPC به ' . $target['username'] . ' با موفقیت انجام شد'], JSON_UNESCAPED_UNICODE);
+            exit;
+        case 'get_wallet_history':
+            $txs = get_wallet_txs($user['id']);
+            $wallet_config = get_wallet_config();
+            echo json_encode(['success' => true, 'transactions' => $txs, 'balance' => $user['wallet_balance'] ?? 0, 'spc_to_toman' => $wallet_config['spc_to_toman']], JSON_UNESCAPED_UNICODE);
             exit;
         case 'admin_get_stats':
             if (!is_admin_user($user)) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
@@ -990,6 +1019,7 @@ if (isset($_GET['action'])) {
             if ($amount < 0) { echo json_encode(['error' => 'مقدار نمی‌تواند منفی باشد']); exit; }
             $users = read_json(USERS_FILE);
             $new_balance = 0;
+            $current = 0;
             foreach ($users as &$u) {
                 if ($u['id'] === $target_id) {
                     $current = $u['wallet_balance'] ?? 0;
@@ -1006,6 +1036,15 @@ if (isset($_GET['action'])) {
             }
             unset($u);
             write_json(USERS_FILE, $users);
+            if ($action_type === 'add' && $amount > 0) {
+                add_wallet_tx($target_id, 'admin_add', $amount, ['note' => 'واریز توسط مدیریت']);
+            } elseif ($action_type === 'subtract' && $amount > 0) {
+                add_wallet_tx($target_id, 'admin_sub', $amount, ['note' => 'کسر توسط مدیریت']);
+            } elseif ($action_type === 'set') {
+                $diff = $new_balance - $current;
+                if ($diff > 0) add_wallet_tx($target_id, 'admin_add', $diff, ['note' => 'تنظیم موجودی توسط مدیریت']);
+                elseif ($diff < 0) add_wallet_tx($target_id, 'admin_sub', -$diff, ['note' => 'تنظیم موجودی توسط مدیریت']);
+            }
             echo json_encode(['success' => true, 'new_balance' => $new_balance]);
             exit;
         case 'admin_create_user':
@@ -1029,6 +1068,9 @@ if (isset($_GET['action'])) {
             $new_user = ['id' => generate_id(), 'username' => $username, 'password' => password_hash($password, PASSWORD_DEFAULT), 'is_admin' => $is_admin, 'active' => $active, 'blocked' => false, 'is_bot' => false, 'name' => $name, 'bio' => $bio, 'avatar' => '', 'privacy_searchable' => $privacy_searchable, 'created_at' => time(), 'last_activity' => time(), 'verified' => $verified, 'premium_until' => $premium_until, 'premium_color' => '', 'premium_message_sound' => false, 'premium_animated_avatar' => false, 'premium_hide_last_seen' => false, 'wallet_balance' => $initial_wallet];
             $users[] = $new_user;
             write_json(USERS_FILE, $users);
+            if ($initial_wallet > 0) {
+                add_wallet_tx($new_user['id'], 'admin_add', $initial_wallet, ['note' => 'موجودی اولیه کیف پول']);
+            }
             echo json_encode(['success' => true, 'user' => safe_user($new_user)], JSON_UNESCAPED_UNICODE);
             exit;
         case 'admin_update_user':
@@ -2138,10 +2180,91 @@ if (!s) return '';
 return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
 function formatTime(ts) { return new Date(ts * 1000).toLocaleTimeString('fa-IR', {hour: '2-digit', minute: '2-digit'}); }
-function formatDate(ts) { return new Date(ts * 1000).toLocaleDateString('fa-IR'); }
+function formatDate(ts) { return toJalaliDate(ts, false); }
 function formatDateTime(ts) {
 if (!ts) return '-';
-return new Date(ts * 1000).toLocaleString('fa-IR', {year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+return toJalaliDate(ts, true);
+}
+/* ==================== تبدیل تاریخ میلادی به شمسی (جلالی) ==================== */
+const JAL_MONTHS = ['فروردین','اردیبهشت','خرداد','تیر','مرداد','شهریور','مهر','آبان','آذر','دی','بهمن','اسفند'];
+const JAL_BREAKS = [-61, 9, 38, 199, 426, 686, 756, 818, 1111, 1181, 1210, 1635, 2060, 2097, 2192, 2262, 2324, 2394, 2456, 3178];
+function jalCal(jy) {
+// الگوریتم رسمی jalaali-js: محاسبه تعداد کبیسه‌ها و طول چرخه
+let jp = JAL_BREAKS[0], leapJ = -14, jump = 0;
+for (let i = 1; i < JAL_BREAKS.length; i += 1) {
+const jm = JAL_BREAKS[i];
+jump = jm - jp;
+if (jy < jm) break;
+leapJ += Math.floor((jump * 33 + 3) / 4);
+jp = jm;
+}
+return { leap: leapJ + Math.floor(((jy - jp) * 33 + 3) / 4), jump: jump };
+}
+function isJalaliLeap(jy) {
+const p = jalCal(jy);
+return (jy - p.leap) % (p.jump || 33) === 0;
+}
+function gregorianToJalali(gy, gm, gd) {
+// تبدیل دقیق میلادی -> شمسی (الگوریتم jalaali-js با مبدأ اعتدال بهاری)
+const leapG = (gy % 4 === 0 && gy % 100 !== 0) || gy % 400 === 0;
+const marchDay = 20 + (leapG ? 1 : 0);
+const g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+let days = gd - marchDay + g_d_m[gm - 1] + (gm > 2 && leapG ? 1 : 0);
+let jy = (gm < 3 || (gm === 3 && gd < marchDay)) ? gy - 622 : gy - 621;
+let jm, jd;
+if (days < 0) {
+days += isJalaliLeap(jy) ? 366 : 365;
+} else if (isJalaliLeap(jy) && days >= 366) {
+days -= 366;
+jy += 1;
+} else if (!isJalaliLeap(jy) && days >= 365) {
+days -= 365;
+jy += 1;
+}
+if (days < 186) { jm = 1 + Math.floor(days / 31); jd = 1 + (days % 31); }
+else { jm = 7 + Math.floor((days - 186) / 30); jd = 1 + ((days - 186) % 30); }
+return [jy, jm, jd];
+}
+function toPersianDigits(str) {
+return String(str).replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[d]);
+}
+function toJalaliDate(ts, withTime) {
+if (!ts) return '-';
+const d = new Date(ts * 1000);
+const [jy, jm, jd] = gregorianToJalali(d.getFullYear(), d.getMonth() + 1, d.getDate());
+const pad = n => String(n).padStart(2, '0');
+let out = toPersianDigits(jy + '/' + pad(jm) + '/' + pad(jd));
+if (withTime) {
+out += ' ساعت ' + toPersianDigits(pad(d.getHours()) + ':' + pad(d.getMinutes()));
+}
+return out;
+}
+function toJalaliLong(ts) {
+if (!ts) return '-';
+const d = new Date(ts * 1000);
+const [jy, jm, jd] = gregorianToJalali(d.getFullYear(), d.getMonth() + 1, d.getDate());
+return toPersianDigits(jd) + ' ' + JAL_MONTHS[jm - 1] + ' ' + toPersianDigits(jy);
+}
+function jalaliDayLabel(ts) {
+const now = new Date();
+const todayStr = toJalaliDate(now.getTime() / 1000, false);
+const thatStr = toJalaliDate(ts, false);
+const yestStr = toJalaliDate((now.getTime() - 86400000) / 1000, false);
+if (thatStr === todayStr) return 'امروز';
+if (thatStr === yestStr) return 'دیروز';
+const d = new Date(ts * 1000);
+const [jy, jm, jd] = gregorianToJalali(d.getFullYear(), d.getMonth() + 1, d.getDate());
+const [cy] = gregorianToJalali(now.getFullYear(), now.getMonth() + 1, now.getDate());
+if (jy === cy) return toPersianDigits(jd) + ' ' + JAL_MONTHS[jm - 1];
+return thatStr;
+}
+function relativeTimeFa(ts) {
+const diff = Math.floor(Date.now() / 1000) - ts;
+if (diff < 60) return 'همین حالا';
+if (diff < 3600) return toPersianDigits(Math.floor(diff / 60)) + ' دقیقه پیش';
+if (diff < 86400) return toPersianDigits(Math.floor(diff / 3600)) + ' ساعت پیش';
+if (diff < 172800) return 'دیروز';
+return jalaliDayLabel(ts);
 }
 function formatBytes(bytes) { if (bytes === 0) return '0 B'; const sizes = ['B','KB','MB','GB']; const i = Math.floor(Math.log(bytes) / Math.log(1024)); return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + sizes[i]; }
 function resolveFileUrl(path) {
