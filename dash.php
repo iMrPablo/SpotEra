@@ -1533,6 +1533,41 @@ body{background:var(--bg);color:var(--t1);transition:background .35s,color .35s}
 .voice-dl{flex:none;width:30px;height:30px;border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--t2);text-decoration:none;font-size:13px;background:rgba(255,255,255,.05);border:1px solid var(--border);transition:.2s}
 .voice-dl:hover{color:var(--accent);border-color:var(--accent);transform:translateY(-2px)}
 .attach-voice{width:100%}
+/* ---------- ارتقاء ظاهر ویس‌های ارسالی (افزونه اختصاصی - بدون حذف هیچ کد قبلی) ---------- */
+.voice-bubble{position:relative;overflow:hidden;padding:12px 14px;border-radius:20px;background:linear-gradient(150deg,rgba(61,219,196,.16),rgba(23,176,155,.05) 65%,rgba(14,185,162,.1));border:1px solid rgba(61,219,196,.3);box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 6px 20px rgba(4,30,26,.25)}
+.message.me .voice-bubble{background:linear-gradient(150deg,rgba(98,247,223,.22),rgba(23,176,155,.1) 65%,rgba(14,185,162,.14));border-color:rgba(98,247,223,.42);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 6px 20px rgba(4,40,34,.3)}
+[data-theme="light"] .voice-bubble{background:linear-gradient(150deg,rgba(23,176,155,.1),rgba(61,219,196,.06));border-color:rgba(23,176,155,.3);box-shadow:0 4px 14px rgba(23,120,105,.12)}
+[data-theme="light"] .message.me .voice-bubble{background:linear-gradient(150deg,rgba(23,176,155,.16),rgba(61,219,196,.08));border-color:rgba(23,176,155,.4)}
+.voice-bubble::before{content:'';position:absolute;top:-60%;left:-30%;width:45%;height:220%;background:linear-gradient(100deg,transparent,rgba(255,255,255,.14),transparent);transform:rotate(18deg);pointer-events:none;opacity:0}
+.voice-bubble.playing::before{opacity:1;animation:voiceSheen 2.6s ease-in-out infinite}
+@keyframes voiceSheen{0%{left:-30%}100%{left:120%}}
+.voice-play-btn{position:relative;width:46px;height:46px;font-size:16px;line-height:1;background:linear-gradient(145deg,#6ffbe4,#0eb9a2 70%,#0aa18d);box-shadow:0 6px 18px rgba(14,185,162,.45),inset 0 1px 0 rgba(255,255,255,.35)}
+.voice-play-btn::after{content:'';position:absolute;inset:-4px;border-radius:50%;border:2px solid rgba(61,219,196,.55);opacity:0;pointer-events:none}
+.voice-bubble.playing .voice-play-btn::after{animation:playRipple 1.5s ease-out infinite}
+@keyframes playRipple{0%{opacity:.85;transform:scale(.82)}70%{opacity:0;transform:scale(1.28)}100%{opacity:0;transform:scale(1.28)}}
+.voice-waveform{height:34px;gap:3px}
+.voice-waveform span{align-self:center;border-radius:99px;min-width:3px;max-width:6px;background:linear-gradient(180deg,rgba(148,172,188,.5),rgba(110,136,152,.4));transition:background .18s,transform .18s,box-shadow .18s}
+[data-theme="light"] .voice-waveform span{background:linear-gradient(180deg,rgba(104,128,142,.4),rgba(84,108,122,.3))}
+.voice-waveform span.played{background:linear-gradient(180deg,#7cf3de,#17b09b);transform:scaleY(1.12);box-shadow:0 0 9px rgba(61,219,196,.55)}
+.voice-waveform:hover span{filter:brightness(1.15)}
+.voice-head{display:flex;align-items:center;gap:6px;font-size:10.5px;font-weight:800;color:var(--t2);letter-spacing:.2px}
+.voice-mic-badge{font-size:11px;filter:drop-shadow(0 0 5px rgba(61,219,196,.5))}
+.voice-speed-btn{margin-inline-start:auto;direction:ltr;min-width:34px;height:22px;padding:0 7px;border-radius:8px;border:1px solid var(--border-strong);background:rgba(255,255,255,.05);color:var(--t2);font-size:10px;font-weight:900;font-family:'Vazirmatn',Tahoma,sans-serif;cursor:pointer;transition:.18s;display:flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums}
+.voice-speed-btn:hover{color:var(--accent);border-color:var(--accent);background:rgba(61,219,196,.1);transform:translateY(-1px)}
+.voice-speed-btn.active{color:#04302a;background:linear-gradient(145deg,#62f7df,#0eb9a2);border-color:transparent;box-shadow:0 3px 10px rgba(14,185,162,.35)}
+.voice-progress-track{position:relative;height:4px;border-radius:99px;background:rgba(138,162,178,.22);overflow:hidden;margin-top:-1px}
+[data-theme="light"] .voice-progress-track{background:rgba(93,118,132,.2)}
+.voice-progress-fill{position:absolute;inset-block:0;inset-inline-start:0;width:0%;border-radius:99px;background:linear-gradient(90deg,#17b09b,#62f7df);box-shadow:0 0 8px rgba(61,219,196,.6);transition:width .25s linear}
+.voice-eq{display:flex;align-items:flex-end;gap:2px;height:12px;opacity:0;transition:opacity .3s}
+.voice-eq i{width:3px;height:20%;border-radius:2px;background:linear-gradient(180deg,#62f7df,#0eb9a2);animation:vbarBounce .9s ease-in-out infinite;animation-delay:calc(var(--i,0)*.12s)}
+.voice-bubble.playing .voice-eq{opacity:1}
+.voice-duration{display:flex;align-items:center;gap:5px;color:var(--accent);font-size:12px}
+.voice-listen-hint{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:99px;background:rgba(255,157,92,.12);border:1px solid rgba(255,157,92,.25);transition:.25s}
+.voice-listen-hint.listened{background:rgba(61,219,196,.12);border-color:rgba(61,219,196,.3);animation:hintPop .3s cubic-bezier(.34,1.56,.64,1)}
+@keyframes hintPop{0%{transform:scale(.7)}100%{transform:scale(1)}}
+.voice-dl{background:linear-gradient(145deg,rgba(61,219,196,.14),rgba(23,176,155,.05))}
+.voice-dl:hover{box-shadow:0 6px 16px rgba(14,185,162,.3);background:linear-gradient(145deg,rgba(61,219,196,.25),rgba(23,176,155,.1))}
+@media (max-width:480px){.voice-bubble{min-width:190px}}
 </style>
 </head>
 <body data-theme="dark">
@@ -1637,7 +1672,7 @@ body{background:var(--bg);color:var(--t1);transition:background .35s,color .35s}
 <button class="voice-cancel-btn" id="voiceCancelBtn" type="button" title="لغو ضبط" onclick="cancelVoice()">✖</button>
 <div class="voice-wave" id="voiceWave"></div>
 <span class="voice-timer" id="voiceTimer">0:00</span>
-<button class="voice-send-btn" id="voiceSendBtn" type="button" title="ارسال ویس" onclick="sendVoice()">➤</button>
+<button class="voice-send-btn" id="voiceSendBtn" type="button" title="ارسال ویس" onclick="sendVoice()">🎙➤</button>
 </div>
 <textarea id="messageInput" placeholder="پیام خود را بنویسید..." rows="1"></textarea>
 <button class="mic-btn" id="micBtn" type="button" title="برای ضبط ویس، دکمه میکروفون را نگه دارید" onclick="requestMicPermission()" onmousedown="startVoice(event)" ontouchstart="startVoice(event)"><span class="mic-ico">🎙️</span><span class="mic-pulse"></span></button>
@@ -2515,15 +2550,21 @@ waveBars += '<span style="height:' + Math.max(14, Math.min(100, wv)) + '%"></spa
 const mm = Math.floor(durSecs / 60), ss = durSecs % 60;
 const durTxt = durSecs > 0 ? (mm + ':' + (ss < 10 ? '0' : '') + ss) : '';
 const dlUrl = fileUrl + '&dl=1';
-fileHtml = '<div class="message-file voice-bubble">' +
+const vHeadHtml = '<div class="voice-head"><span class="voice-mic-badge">🎙</span><span>ویس</span><span class="voice-eq" aria-hidden="true"><i style="--i:0"></i><i style="--i:1"></i><i style="--i:2"></i><i style="--i:3"></i></span><button type="button" class="voice-speed-btn" id="vspd_' + m.id + '" data-msg="' + m.id + '" onclick="cycleVoiceSpeed(this.dataset.msg)" title="تغییر سرعت پخش">1x</button></div>';
+const vTrackHtml = '<div class="voice-progress-track"><div class="voice-progress-fill" id="vprog_' + m.id + '"></div></div>';
+const vWasPlayed = playedVoices.has(m.id);
+fileHtml = '<div class="message-file voice-bubble" id="vbub_' + m.id + '">' +
 '<button type="button" class="voice-play-btn" id="vpb_' + m.id + '" onclick="toggleVoicePlay(\'' + m.id + '\', \'' + fileUrl + '\', this)" title="پخش / توقف">▶</button>' +
 '<div class="voice-body">' +
+vHeadHtml +
 '<div class="voice-waveform" id="vwf_' + m.id + '" onclick="seekVoice(event, \'' + m.id + '\')">' + waveBars + '</div>' +
-'<div class="voice-bottom"><span class="voice-duration" id="vdur_' + m.id + '">' + durTxt + '</span><span class="voice-listen-hint" id="vhint_' + m.id + '">● پخش نشده</span></div>' +
+vTrackHtml +
+'<div class="voice-bottom"><span class="voice-duration" id="vdur_' + m.id + '">⏱ ' + durTxt + '</span><span class="voice-listen-hint" id="vhint_' + m.id + '">' + (vWasPlayed ? '✓ شنیده شده' : '● پخش نشده') + '</span></div>' +
 '</div>' +
 '<a class="voice-dl" href="' + dlUrl + '" target="_blank" title="دانلود ویس">⬇</a>' +
 '<audio id="vaudio_' + m.id + '" src="" preload="none" data-src="' + fileUrl + '"></audio>' +
 '</div>';
+if (vWasPlayed && typeof document !== 'undefined') { setTimeout(() => { try { const hel = document.getElementById('vhint_' + m.id); if (hel) hel.classList.add('listened'); } catch (e) {} }, 0); }
 } else {
 fileHtml = '<div class="message-file"><a class="file-chip" href="' + fileUrl + '" target="_blank">📄 ' + escapeHtml(m.file_name || 'فایل') + '</a></div>';
 }
@@ -2865,6 +2906,7 @@ function stopAllVoices() {
 document.querySelectorAll('#messages audio').forEach(a => { try { a.pause(); a.currentTime = 0; } catch (e) {} });
 currentVoiceAudio = null;
 document.querySelectorAll('.voice-play-btn').forEach(b => { if (b.textContent === '⏸') b.textContent = '▶'; });
+document.querySelectorAll('.voice-bubble.playing').forEach(b => b.classList.remove('playing'));
 }
 function fmtVoiceTime(s) { s = Math.max(0, Math.floor(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
 // ---------- پنل اختصاصی درخواست مجوز میکروفون ----------
@@ -3084,7 +3126,7 @@ await loadChats();
 function markVoicePlayed(msgId) {
 playedVoices.add(msgId);
 const hint = document.getElementById('vhint_' + msgId);
-if (hint) { hint.textContent = 'شنیده شده'; hint.classList.add('listened'); }
+if (hint) { hint.textContent = '✓ شنیده شده'; hint.classList.add('listened'); }
 }
 function toggleVoicePlay(msgId, fileUrl, btn) {
 const audio = document.getElementById('vaudio_' + msgId);
@@ -3092,13 +3134,15 @@ if (!audio) return;
 if (!audio.src || audio.src === window.location.href) { audio.src = fileUrl; }
 if (audio.paused) {
 stopOthers(audio);
-audio.play().then(() => { btn.textContent = '⏸'; }).catch(() => showToast('پخش ویس ناموفق بود'));
+try { audio.playbackRate = voiceSpeeds[msgId] || 1; } catch (e) {}
+audio.play().then(() => { btn.textContent = '⏸'; const bub = document.getElementById('vbub_' + msgId); if (bub) bub.classList.add('playing'); }).catch(() => showToast('پخش ویس ناموفق بود'));
 markVoicePlayed(msgId);
 } else {
 audio.pause();
 btn.textContent = '▶';
+const bub = document.getElementById('vbub_' + msgId); if (bub) bub.classList.remove('playing');
 }
-audio.onended = () => { btn.textContent = '▶'; setVoiceProgress(msgId, 1); };
+audio.onended = () => { btn.textContent = '▶'; setVoiceProgress(msgId, 1); const bub = document.getElementById('vbub_' + msgId); if (bub) bub.classList.remove('playing'); };
 audio.ontimeupdate = () => {
 if (audio.duration > 0) setVoiceProgress(msgId, audio.currentTime / audio.duration);
 const durEl = document.getElementById('vdur_' + msgId);
@@ -3114,7 +3158,7 @@ if (msg && !msg.voice_duration) msg.voice_duration = String(Math.round(m));
 }
 function stopOthers(exceptAudio) {
 document.querySelectorAll('#messages audio').forEach(a => {
-if (a !== exceptAudio && !a.paused) { a.pause(); const bubble = a.closest('.voice-bubble'); if (bubble) { const b = bubble.querySelector('.voice-play-btn'); if (b) b.textContent = '▶'; } }
+if (a !== exceptAudio && !a.paused) { a.pause(); const bubble = a.closest('.voice-bubble'); if (bubble) { bubble.classList.remove('playing'); const b = bubble.querySelector('.voice-play-btn'); if (b) b.textContent = '▶'; } }
 });
 }
 function setVoiceProgress(msgId, ratio) {
@@ -3123,6 +3167,10 @@ if (!wf) return;
 const bars = wf.querySelectorAll('span');
 const upto = Math.floor(ratio * bars.length);
 bars.forEach((b, i) => b.classList.toggle('played', i < upto));
+try {
+const vpf = document.getElementById('vprog_' + msgId);
+if (vpf) vpf.style.width = Math.max(0, Math.min(100, ratio * 100)) + '%';
+} catch (e) {}
 }
 function seekVoice(ev, msgId) {
 const audio = document.getElementById('vaudio_' + msgId);
@@ -3131,6 +3179,24 @@ const rect = ev.currentTarget.getBoundingClientRect();
 const pos = (rect.right - ev.clientX) / rect.width;
 audio.currentTime = Math.max(0, Math.min(1, pos)) * audio.duration;
 setVoiceProgress(msgId, audio.currentTime / audio.duration);
+}
+/* ---------- افزونه‌های اختصاصی ویس: سرعت پخش ---------- */
+const voiceSpeeds = {};
+const voiceSpeedSteps = [1, 1.25, 1.5, 2, 0.75];
+function cycleVoiceSpeed(msgId) {
+const audio = document.getElementById('vaudio_' + msgId);
+if (!audio) return;
+const cur = voiceSpeeds[msgId] || 1;
+const idx = voiceSpeedSteps.indexOf(cur);
+const next = voiceSpeedSteps[(idx + 1) % voiceSpeedSteps.length];
+voiceSpeeds[msgId] = next;
+try { audio.playbackRate = next; } catch (e) {}
+const spBtn = document.getElementById('vspd_' + msgId);
+if (spBtn) {
+spBtn.textContent = (next === 1 ? '1' : next) + 'x';
+spBtn.classList.toggle('active', next !== 1);
+}
+showToast('سرعت پخش: ' + (next === 1 ? 'عادی' : next + ' برابر'));
 }
 async function editMessage(msgId) {
 const msg = currentMessages.find(m => m.id === msgId);
