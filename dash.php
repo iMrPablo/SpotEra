@@ -2,121 +2,49 @@
 session_start();
 error_reporting(E_ALL);
 ini_set('display_errors', 0);
-
+@ini_set('max_execution_time', '300');
+@ini_set('max_input_time', '300');
+@ini_set('memory_limit', '512M');
+@ini_set('post_max_size', '500M');
+@ini_set('upload_max_filesize', '500M');
 define('DATA_DIR', __DIR__ . '/data');
 define('USERS_FILE', DATA_DIR . '/users.json');
 define('MESSAGES_FILE', DATA_DIR . '/messages.json');
 define('CONFIG_FILE', DATA_DIR . '/config.json');
 define('CHATS_FILE', DATA_DIR . '/chats.json');
 define('READS_FILE', DATA_DIR . '/reads.json');
+define('WALLET_CONFIG_FILE', DATA_DIR . '/wallet_config.json');
 define('UPLOADS_DIR', DATA_DIR . '/uploads');
 define('AVATARS_DIR', DATA_DIR . '/avatars');
-define('PREVIEWS_FILE', DATA_DIR . '/previews.json');
-
+define('NORMAL_MAX_UPLOAD_MB', 200);
+define('PREMIUM_MAX_UPLOAD_MB', 500);
+define('NORMAL_BIO_MAX', 200);
+define('PREMIUM_BIO_MAX', 1000);
 if (!is_dir(DATA_DIR)) @mkdir(DATA_DIR, 0755, true);
 if (!is_dir(UPLOADS_DIR)) @mkdir(UPLOADS_DIR, 0755, true);
 if (!is_dir(AVATARS_DIR)) @mkdir(AVATARS_DIR, 0755, true);
-
-function read_json($file) {
-    if (!file_exists($file)) return [];
-    $d = json_decode(file_get_contents($file), true);
-    return is_array($d) ? $d : [];
-}
-
-function write_json($file, $data) {
-    file_put_contents($file, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-}
-
-function generate_id() {
-    return uniqid('x_', true) . '_' . bin2hex(random_bytes(4));
-}
-
-function find_user_by_id($id) {
-    foreach (read_json(USERS_FILE) as $u) {
-        if ($u['id'] === $id) return $u;
+function read_json($file) { if (!file_exists($file)) return []; $d = json_decode(file_get_contents($file), true); return is_array($d) ? $d : []; }
+function write_json($file, $data) { file_put_contents($file, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)); }
+function generate_id() { return uniqid('x_', true) . '_' . bin2hex(random_bytes(4)); }
+function find_user_by_id($id) { foreach (read_json(USERS_FILE) as $u) { if ($u['id'] === $id) return $u; } return null; }
+function find_user_by_username($username) { $username = mb_strtolower(trim($username)); foreach (read_json(USERS_FILE) as $u) { if (mb_strtolower(trim($u['username'])) === $username) return $u; } return null; }
+function username_exists($username, $exclude_id = null) { $username = mb_strtolower(trim($username)); foreach (read_json(USERS_FILE) as $u) { if ($exclude_id && $u['id'] === $exclude_id) continue; if (mb_strtolower(trim($u['username'])) === $username) return true; } return false; }
+function current_user() { if (!isset($_SESSION['user_id'])) return null; return find_user_by_id($_SESSION['user_id']); }
+function is_admin_user($user) { return !empty($user['is_admin']); }
+function is_premium_user($user) { return !empty($user['premium_until']) && $user['premium_until'] > time(); }
+function get_wallet_config() {
+    if (!file_exists(WALLET_CONFIG_FILE)) {
+        $default = ['spc_to_toman' => 1000];
+        write_json(WALLET_CONFIG_FILE, $default);
+        return $default;
     }
-    return null;
+    $data = read_json(WALLET_CONFIG_FILE);
+    return !empty($data) ? $data : ['spc_to_toman' => 1000];
 }
-
-function username_exists($username, $exclude_id = null) {
-    $username = mb_strtolower(trim($username));
-    foreach (read_json(USERS_FILE) as $u) {
-        if ($exclude_id && $u['id'] === $exclude_id) continue;
-        if (mb_strtolower(trim($u['username'])) === $username) return true;
-    }
-    return false;
-}
-
-function current_user() {
-    if (!isset($_SESSION['user_id'])) return null;
-    return find_user_by_id($_SESSION['user_id']);
-}
-
-function is_admin_user($user) {
-    return !empty($user['is_admin']);
-}
-
-function message_preview($m) {
-    if (!empty($m['file_path'])) {
-        $caption = trim($m['caption'] ?? '');
-        if ($caption !== '') return $caption;
-        if (!empty($m['file_name'])) return '📎 ' . $m['file_name'];
-        return '📎 فایل';
-    }
-    return trim($m['text'] ?? '');
-}
-
-function unlink_message_file($m) {
-    if (!empty($m['file_path'])) {
-        $path = __DIR__ . '/' . ltrim($m['file_path'], '/');
-        if (is_file($path)) @unlink($path);
-    }
-}
-
-function delete_chat_data($chat_id) {
-    $chats = read_json(CHATS_FILE);
-    $new_chats = [];
-    foreach ($chats as $c) {
-        if (($c['id'] ?? '') === $chat_id) continue;
-        $new_chats[] = $c;
-    }
-    write_json(CHATS_FILE, $new_chats);
-
-    $messages = read_json(MESSAGES_FILE);
-    $new_messages = [];
-    foreach ($messages as $m) {
-        if (($m['chat_id'] ?? '') === $chat_id) {
-            unlink_message_file($m);
-            continue;
-        }
-        $new_messages[] = $m;
-    }
-    write_json(MESSAGES_FILE, $new_messages);
-}
-
-function update_messages_username($user_id, $new_username) {
-    $messages = read_json(MESSAGES_FILE);
-    $changed = false;
-    foreach ($messages as &$m) {
-        if (($m['user_id'] ?? '') === $user_id) {
-            $m['username'] = $new_username;
-            $changed = true;
-        }
-    }
-    unset($m);
-    if ($changed) write_json(MESSAGES_FILE, $messages);
-}
-
-function dir_size($dir) {
-    if (!is_dir($dir)) return 0;
-    $size = 0;
-    foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir)) as $file) {
-        if ($file->isFile()) $size += $file->getSize();
-    }
-    return $size;
-}
-
 function safe_user($u) {
+    $premium = is_premium_user($u);
+    $premium_until = $premium ? $u['premium_until'] : 0;
+    $days_left = $premium ? max(0, ceil(($u['premium_until'] - time()) / 86400)) : 0;
     return [
         'id' => $u['id'],
         'username' => $u['username'],
@@ -129,757 +57,674 @@ function safe_user($u) {
         'is_bot' => !empty($u['is_bot']),
         'privacy_searchable' => !isset($u['privacy_searchable']) || !empty($u['privacy_searchable']),
         'created_at' => $u['created_at'] ?? time(),
+        'last_activity' => $u['last_activity'] ?? time(),
+        'verified' => !empty($u['verified']),
+        'premium' => $premium,
+        'premium_until' => $premium_until,
+        'premium_days_left' => $days_left,
+        'premium_color' => $u['premium_color'] ?? '',
+        'premium_message_sound' => !empty($u['premium_message_sound']),
+        'premium_animated_avatar' => !empty($u['premium_animated_avatar']),
+        'premium_hide_last_seen' => !empty($u['premium_hide_last_seen']),
+        'wallet_balance' => $u['wallet_balance'] ?? 0,
     ];
 }
-
-function get_link_preview($url) {
-    $url = trim($url);
-    if (!preg_match('/^https?:\/\//i', $url)) $url = 'https://' . $url;
-    if (!filter_var($url, FILTER_VALIDATE_URL)) return null;
-
-    $previews = read_json(PREVIEWS_FILE);
-    $url_key = md5($url);
-    if (isset($previews[$url_key])) {
-        $p = $previews[$url_key];
-        if ((time() - ($p['cached_at'] ?? 0)) < 86400) return $p;
-    }
-
-    $ch = curl_init();
-    curl_setopt_array($ch, [
-        CURLOPT_URL => $url,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 8,
-        CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_MAXREDIRS => 3,
-        CURLOPT_SSL_VERIFYPEER => false,
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        CURLOPT_ENCODING => '',
-    ]);
-    $html = curl_exec($ch);
-    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if (!$html || $http_code >= 400) return null;
-    $html = mb_substr($html, 0, 500000);
-
-    $title = '';
-    $description = '';
-    $image = '';
-    $site = parse_url($url, PHP_URL_HOST) ?: '';
-
-    if (preg_match('/<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']/i', $html, $m)) {
-        $title = html_entity_decode($m[1], ENT_QUOTES, 'UTF-8');
-    } elseif (preg_match('/<title[^>]*>([^<]+)<\/title>/i', $html, $m)) {
-        $title = html_entity_decode($m[1], ENT_QUOTES, 'UTF-8');
-    }
-
-    if (preg_match('/<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']/i', $html, $m)) {
-        $description = html_entity_decode($m[1], ENT_QUOTES, 'UTF-8');
-    } elseif (preg_match('/<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']/i', $html, $m)) {
-        $description = html_entity_decode($m[1], ENT_QUOTES, 'UTF-8');
-    }
-
-    if (preg_match('/<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']/i', $html, $m)) {
-        $image = $m[1];
-        if (!preg_match('/^https?:\/\//i', $image)) {
-            $base = parse_url($url, PHP_URL_SCHEME) . '://' . parse_url($url, PHP_URL_HOST);
-            $image = rtrim($base, '/') . '/' . ltrim($image, '/');
+function message_preview($m) { if (!empty($m['file_path'])) { $caption = trim($m['caption'] ?? ''); if ($caption !== '') return $caption; if (!empty($m['file_name'])) return '📎 ' . $m['file_name']; return '📎 فایل'; } return trim($m['text'] ?? ''); }
+function unlink_message_file($m) { if (!empty($m['file_path'])) { $path = __DIR__ . '/' . ltrim($m['file_path'], '/'); if (is_file($path)) @unlink($path); } }
+function delete_chat_data($chat_id) { $chats = read_json(CHATS_FILE); $new_chats = []; foreach ($chats as $c) { if (($c['id'] ?? '') === $chat_id) continue; $new_chats[] = $c; } write_json(CHATS_FILE, $new_chats); $messages = read_json(MESSAGES_FILE); $new_messages = []; foreach ($messages as $m) { if (($m['chat_id'] ?? '') === $chat_id) { unlink_message_file($m); continue; } $new_messages[] = $m; } write_json(MESSAGES_FILE, $new_messages); }
+function update_messages_username($user_id, $new_username) { $messages = read_json(MESSAGES_FILE); $changed = false; foreach ($messages as &$m) { if (($m['user_id'] ?? '') === $user_id) { $m['username'] = $new_username; $changed = true; } } unset($m); if ($changed) write_json(MESSAGES_FILE, $messages); }
+function dir_size($dir) { if (!is_dir($dir)) return 0; $size = 0; foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS)) as $file) { if ($file->isFile()) $size += $file->getSize(); } return $size; }
+function ensure_saved_chat($user) { $chats = read_json(CHATS_FILE); foreach ($chats as $c) { if (($c['type'] ?? '') === 'saved' && ($c['owner_id'] ?? '') === $user['id']) return $c; } $chat = ['id' => generate_id(), 'type' => 'saved', 'name' => 'پیام‌های ذخیره‌شده', 'description' => 'فضای شخصی شما', 'owner_id' => $user['id'], 'members' => [$user['id']], 'avatar_image' => '', 'verified' => false, 'created_at' => time()]; $chats[] = $chat; write_json(CHATS_FILE, $chats); return $chat; }
+function get_unread_count($chat_id, $user_id) { $reads = read_json(READS_FILE); $last_read_id = $reads[$chat_id][$user_id] ?? null; $messages = read_json(MESSAGES_FILE); $chat_msgs = []; foreach ($messages as $m) { if (($m['chat_id'] ?? '') === $chat_id) $chat_msgs[] = $m; } usort($chat_msgs, fn($a, $b) => ($a['created_at'] ?? 0) - ($b['created_at'] ?? 0)); if (empty($chat_msgs)) return 0; if (!$last_read_id) { $count = 0; foreach ($chat_msgs as $m) { if (($m['user_id'] ?? '') !== $user_id) $count++; } return $count; } $found = false; $count = 0; foreach ($chat_msgs as $m) { if ($found && ($m['user_id'] ?? '') !== $user_id) $count++; if (($m['id'] ?? '') === $last_read_id) $found = true; } return $count; }
+function is_message_seen($message, $chat_members, $current_user_id) { if (($message['user_id'] ?? '') !== $current_user_id) return true; $seen_by = $message['seen_by'] ?? []; foreach ($chat_members as $mid) { if ($mid !== $current_user_id && in_array($mid, $seen_by)) return true; } return false; }
+function update_last_activity($user_id) {
+    $users = read_json(USERS_FILE);
+    $changed = false;
+    $now = time();
+    foreach ($users as &$u) {
+        if ($u['id'] === $user_id) {
+            $last = $u['last_activity'] ?? 0;
+            if ($now - $last >= 45) {
+                $u['last_activity'] = $now;
+                $changed = true;
+            }
+            break;
         }
     }
-
-    $title = trim($title);
-    $description = trim($description);
-    if (mb_strlen($description) > 200) $description = mb_substr($description, 0, 197) . '...';
-
-    $preview = [
-        'url' => $url,
-        'title' => $title,
-        'description' => $description,
-        'image' => $image,
-        'site' => $site,
-        'cached_at' => time()
-    ];
-
-    if ($title || $description || $image) {
-        $previews[$url_key] = $preview;
-        if (count($previews) > 500) {
-            $oldest_keys = array_slice(array_keys($previews), 0, 100);
-            foreach ($oldest_keys as $k) unset($previews[$k]);
-        }
-        write_json(PREVIEWS_FILE, $previews);
-        return $preview;
-    }
-
-    return null;
+    unset($u);
+    if ($changed) write_json(USERS_FILE, $users);
 }
-
-function extract_urls($text) {
-    $urls = [];
-    if (preg_match_all('/(https?:\/\/[^\s<>\'"]+)|(?:^|\s)((?:www\.)[^\s<>\'"]+)|((?:[a-zA-Z0-9-]+\.)+(?:com|net|org|ir|io|co|info|me|tv|app|dev|xyz)(?:\/[^\s<>\'"]*)?)/i', $text, $matches)) {
-        foreach ($matches[0] as $m) {
-            $m = trim($m);
-            if ($m !== '' && !preg_match('/^https?:\/\//i', $m)) $m = 'https://' . $m;
-            $urls[] = $m;
-        }
-    }
-    return array_unique($urls);
-}
-
-function get_unread_count($chat_id, $user_id) {
-    $reads = read_json(READS_FILE);
-    $last_read_id = $reads[$chat_id][$user_id] ?? null;
-
-    $messages = read_json(MESSAGES_FILE);
-    $chat_msgs = [];
-    foreach ($messages as $m) {
-        if (($m['chat_id'] ?? '') === $chat_id) $chat_msgs[] = $m;
-    }
-    usort($chat_msgs, fn($a, $b) => ($a['created_at'] ?? 0) - ($b['created_at'] ?? 0));
-
-    if (empty($chat_msgs)) return 0;
-    if (!$last_read_id) {
-        $count = 0;
-        foreach ($chat_msgs as $m) {
-            if (($m['user_id'] ?? '') !== $user_id) $count++;
-        }
-        return $count;
-    }
-
-    $found = false;
-    $count = 0;
-    foreach ($chat_msgs as $m) {
-        if ($found && ($m['user_id'] ?? '') !== $user_id) {
-            $count++;
-        }
-        if (($m['id'] ?? '') === $last_read_id) {
-            $found = true;
-        }
-    }
-    return $count;
-}
-
-function is_message_seen($message, $chat_members, $current_user_id) {
-    if (($message['user_id'] ?? '') !== $current_user_id) return true;
-    $seen_by = $message['seen_by'] ?? [];
-    foreach ($chat_members as $mid) {
-        if ($mid !== $current_user_id && in_array($mid, $seen_by)) return true;
-    }
-    return false;
-}
-
+function get_online_status($user) { if (empty($user) || empty($user['id'])) return ['online' => false, 'last_seen' => 0, 'text' => '']; $hide_last_seen = !empty($user['premium_hide_last_seen']) && is_premium_user($user); $last = $user['last_activity'] ?? time(); $diff = time() - $last; $online = $diff < 60; if ($online) $text = 'آنلاین'; elseif ($hide_last_seen) $text = 'اخیراً'; elseif ($diff < 3600) $text = floor($diff / 60) . ' دقیقه پیش'; elseif ($diff < 86400) $text = floor($diff / 3600) . ' ساعت پیش'; elseif ($diff < 172800) $text = 'دیروز'; else $text = date('Y/m/d', $last); return ['online' => $online, 'last_seen' => $last, 'text' => $text, 'hide_last_seen' => $hide_last_seen]; }
+if (!file_exists(CONFIG_FILE)) { header('Location: index.php'); exit; }
+$user = current_user();
+if (!$user) { header('Location: index.php'); exit; }
 if (isset($_GET['action'])) {
-    header('Content-Type: application/json; charset=utf-8');
-    $user = current_user();
-    if (!$user) die(json_encode(['error' => 'لاگین نیستید']));
-
     $action = $_GET['action'];
-
+    if ($action === 'serve_file') {
+        $p = str_replace('\\', '/', trim($_GET['p'] ?? ''));
+        $p = ltrim($p, '/');
+        if (strpos($p, '..') !== false) { http_response_code(403); exit('Forbidden'); }
+        $ok = (strpos($p, 'data/uploads/') === 0) || (strpos($p, 'data/avatars/') === 0);
+        if (!$ok) { http_response_code(403); exit('Forbidden'); }
+        $full = __DIR__ . '/' . $p;
+        if (!is_file($full)) { http_response_code(404); exit('Not found'); }
+        $ext = strtolower(pathinfo($p, PATHINFO_EXTENSION));
+        $mimeMap = ['jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png', 'gif' => 'image/gif', 'webp' => 'image/webp', 'bmp' => 'image/bmp', 'mp4' => 'video/mp4', 'webm' => 'video/webm', 'mov' => 'video/quicktime', 'mkv' => 'video/x-matroska', 'pdf' => 'application/pdf', 'txt' => 'text/plain'];
+        $mime = $mimeMap[$ext] ?? 'application/octet-stream';
+        header('Content-Type: ' . $mime);
+        header('Content-Length: ' . filesize($full));
+        header('Cache-Control: private, max-age=86400');
+        header('Content-Disposition: inline; filename="' . basename($p) . '"');
+        readfile($full);
+        exit;
+    }
+    header('Content-Type: application/json; charset=utf-8');
+    if ($action === 'poll_state') {
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+        header('Pragma: no-cache');
+        update_last_activity($user['id']);
+        session_write_close();
+        $known = trim($_GET['known'] ?? '');
+        $wait = min(25, max(0, (int)($_GET['wait'] ?? 0)));
+        $get_state = function () {
+            clearstatcache();
+            $m = (@filemtime(MESSAGES_FILE) ?: 0) . ':' . (@filesize(MESSAGES_FILE) ?: 0);
+            $c = (@filemtime(CHATS_FILE) ?: 0) . ':' . (@filesize(CHATS_FILE) ?: 0);
+            $r = (@filemtime(READS_FILE) ?: 0) . ':' . (@filesize(READS_FILE) ?: 0);
+            $u = (@filemtime(USERS_FILE) ?: 0) . ':' . (@filesize(USERS_FILE) ?: 0);
+            return md5($m . '|' . $c . '|' . $r . '|' . $u);
+        };
+        $state = $get_state();
+        if ($wait > 0 && $known !== '' && $state === $known) {
+            $end = microtime(true) + $wait;
+            while (microtime(true) < $end) {
+                usleep(400000);
+                $state = $get_state();
+                if ($state !== $known) break;
+            }
+        }
+        echo json_encode(['state' => $state, 'changed' => ($known === '' || $state !== $known), 'ts' => time()]);
+        exit;
+    }
+    update_last_activity($user['id']);
     switch ($action) {
         case 'logout':
             $_SESSION = [];
-            if (ini_get('session.use_cookies')) {
-                $p = session_get_cookie_params();
-                setcookie(session_name(), '', time() - 42000, $p['path'], $p['domain'], $p['secure'], $p['httponly']);
-            }
+            if (ini_get('session.use_cookies')) { $p = session_get_cookie_params(); setcookie(session_name(), '', time() - 42000, $p['path'], $p['domain'], $p['secure'], $p['httponly']); }
             session_destroy();
             echo json_encode(['success' => true, 'redirect' => 'index.php']);
             exit;
-
         case 'get_chats':
+            ensure_saved_chat($user);
             $chats = read_json(CHATS_FILE);
             $users = read_json(USERS_FILE);
             $messages = read_json(MESSAGES_FILE);
             $my_chats = [];
-
             foreach ($chats as $chat) {
                 if (!in_array($user['id'], $chat['members'] ?? [])) continue;
-
                 if (($chat['type'] ?? '') === 'private') {
                     if (count($chat['members']) < 2) continue;
                     $other_id = $chat['members'][0] === $user['id'] ? $chat['members'][1] : $chat['members'][0];
                     $other = null;
-                    foreach ($users as $u) if ($u['id'] === $other_id) { $other = $u; break; }
+                    foreach ($users as $u) { if ($u['id'] === $other_id) { $other = $u; break; } }
                     if (!$other) continue;
-
                     $display = trim($other['name'] ?? '') !== '' ? $other['name'] : $other['username'];
                     $chat['display_name'] = $display;
-                    $chat['avatar'] = mb_substr($display, 0, 1);
                     $chat['avatar_path'] = $other['avatar'] ?? '';
                     $chat['other_user_id'] = $other_id;
-                    $chat['other_is_bot'] = !empty($other['is_bot']);
+                    $chat['other_username'] = $other['username'] ?? '';
+                    $chat['other_verified'] = !empty($other['verified']);
+                    $chat['other_premium'] = is_premium_user($other);
+                    $status = get_online_status($other);
+                    $chat['other_online'] = $status['online'];
+                    $chat['other_last_seen_text'] = $status['text'];
                 } else {
-                    $display = $chat['name'] ?? 'بدون نام';
-                    $chat['display_name'] = $display;
-                    $chat['avatar'] = mb_substr($display, 0, 1);
+                    $chat['display_name'] = $chat['name'] ?? 'بدون نام';
                     $chat['avatar_path'] = $chat['avatar_image'] ?? '';
+                    $owner = find_user_by_id($chat['owner_id'] ?? '');
+                    $chat['owner_name'] = $owner ? ($owner['name'] ?: $owner['username']) : 'نامشخص';
+                    $chat['owner_username'] = $owner ? $owner['username'] : '';
+                    $chat['owner_premium'] = $owner ? is_premium_user($owner) : false;
+                    $online_count = 0;
+                    foreach ($chat['members'] as $mid) {
+                        if ($mid === $user['id']) continue;
+                        $u = find_user_by_id($mid);
+                        if ($u) { $st = get_online_status($u); if ($st['online']) $online_count++; }
+                    }
+                    $chat['online_members_count'] = $online_count;
                 }
-
                 $chat_messages = array_filter($messages, fn($m) => ($m['chat_id'] ?? '') === $chat['id']);
                 usort($chat_messages, fn($a, $b) => ($b['created_at'] ?? 0) - ($a['created_at'] ?? 0));
                 $last = $chat_messages[0] ?? null;
-
-                $chat['last_message'] = $last ? mb_substr(message_preview($last), 0, 60) : '';
+                $chat['last_message'] = $last ? mb_substr(message_preview($last), 0, 70) : '';
                 $chat['last_time'] = $last ? ($last['created_at'] ?? time()) : ($chat['created_at'] ?? time());
                 $chat['unread_count'] = get_unread_count($chat['id'], $user['id']);
                 $chat['last_is_mine'] = $last ? (($last['user_id'] ?? '') === $user['id']) : false;
                 $chat['last_seen'] = $last ? is_message_seen($last, $chat['members'] ?? [], $user['id']) : false;
-                $chat['last_user_id'] = $last ? ($last['user_id'] ?? '') : '';
                 $chat['last_username'] = $last ? ($last['username'] ?? '') : '';
                 $my_chats[] = $chat;
             }
-
             usort($my_chats, fn($a, $b) => ($b['last_time'] ?? 0) - ($a['last_time'] ?? 0));
-            echo json_encode(['chats' => $my_chats]);
+            echo json_encode(['chats' => $my_chats], JSON_UNESCAPED_UNICODE);
             exit;
-
         case 'get_messages':
             $chat_id = $_GET['chat_id'] ?? '';
-            if (!$chat_id) die(json_encode(['error' => 'چت نامعتبر است']));
-
+            if (!$chat_id) { echo json_encode(['error' => 'چت نامعتبر است']); exit; }
             $chats = read_json(CHATS_FILE);
             $chat = null;
-            foreach ($chats as $c) if ($c['id'] === $chat_id) { $chat = $c; break; }
-
-            if (!$chat || !in_array($user['id'], $chat['members'] ?? [])) {
-                die(json_encode(['error' => 'دسترسی غیرمجاز است']));
-            }
-
+            foreach ($chats as $c) { if ($c['id'] === $chat_id) { $chat = $c; break; } }
+            if (!$chat || !in_array($user['id'], $chat['members'] ?? [])) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
             $messages = read_json(MESSAGES_FILE);
+            $users = read_json(USERS_FILE);
             $chat_messages = [];
             foreach ($messages as $m) {
-                if (($m['chat_id'] ?? '') === $chat_id) $chat_messages[] = $m;
+                if (($m['chat_id'] ?? '') === $chat_id) {
+                    $sender = null;
+                    foreach ($users as $uu) { if ($uu['id'] === ($m['user_id'] ?? '')) { $sender = $uu; break; } }
+                    $m['sender_premium'] = $sender ? is_premium_user($sender) : false;
+                    $m['sender_premium_color'] = $sender ? ($sender['premium_color'] ?? '') : '';
+                    $m['sender_verified'] = $sender ? !empty($sender['verified']) : false;
+                    $chat_messages[] = $m;
+                }
             }
             usort($chat_messages, fn($a, $b) => ($a['created_at'] ?? 0) - ($b['created_at'] ?? 0));
-
-            echo json_encode([
-                'messages' => $chat_messages,
-                'chat' => $chat,
-                'current_user' => safe_user($user)
-            ]);
+            if ($chat['type'] === 'private') {
+                $other_id = $chat['members'][0] === $user['id'] ? $chat['members'][1] : $chat['members'][0];
+                $other = find_user_by_id($other_id);
+                if ($other) {
+                    $status = get_online_status($other);
+                    $chat['other_user_id'] = $other_id;
+                    $chat['other_username'] = $other['username'] ?? '';
+                    $chat['other_online'] = $status['online'];
+                    $chat['other_last_seen_text'] = $status['text'];
+                    $chat['other_verified'] = !empty($other['verified']);
+                    $chat['other_premium'] = is_premium_user($other);
+                    $chat['other_premium_color'] = $other['premium_color'] ?? '';
+                    $chat['display_name'] = trim($other['name'] ?? '') !== '' ? $other['name'] : $other['username'];
+                    $chat['avatar_path'] = $other['avatar'] ?? '';
+                }
+            } else {
+                $online_count = 0;
+                foreach ($chat['members'] as $mid) {
+                    if ($mid === $user['id']) continue;
+                    $u = find_user_by_id($mid);
+                    if ($u) { $st = get_online_status($u); if ($st['online']) $online_count++; }
+                }
+                $chat['online_members_count'] = $online_count;
+                $chat['display_name'] = $chat['name'] ?? 'بدون نام';
+                $chat['avatar_path'] = $chat['avatar_image'] ?? '';
+                $owner = find_user_by_id($chat['owner_id'] ?? '');
+                $chat['owner_name'] = $owner ? ($owner['name'] ?: $owner['username']) : 'نامشخص';
+                $chat['owner_username'] = $owner ? $owner['username'] : '';
+                $chat['owner_premium'] = $owner ? is_premium_user($owner) : false;
+            }
+            echo json_encode(['messages' => $chat_messages, 'chat' => $chat, 'current_user' => safe_user($user)], JSON_UNESCAPED_UNICODE);
             exit;
-
         case 'mark_chat_read':
             $chat_id = $_POST['chat_id'] ?? '';
-            if (!$chat_id) die(json_encode(['error' => 'چت نامعتبر است']));
-
+            if (!$chat_id) { echo json_encode(['error' => 'چت نامعتبر است']); exit; }
             $chats = read_json(CHATS_FILE);
             $chat = null;
-            foreach ($chats as $c) if ($c['id'] === $chat_id) { $chat = $c; break; }
-            if (!$chat || !in_array($user['id'], $chat['members'] ?? [])) {
-                die(json_encode(['error' => 'دسترسی غیرمجاز است']));
-            }
-
+            foreach ($chats as $c) { if ($c['id'] === $chat_id) { $chat = $c; break; } }
+            if (!$chat || !in_array($user['id'], $chat['members'] ?? [])) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
             $messages = read_json(MESSAGES_FILE);
             $chat_msgs = [];
-            foreach ($messages as $m) {
-                if (($m['chat_id'] ?? '') === $chat_id) $chat_msgs[] = $m;
-            }
+            foreach ($messages as $m) { if (($m['chat_id'] ?? '') === $chat_id) $chat_msgs[] = $m; }
             usort($chat_msgs, fn($a, $b) => ($b['created_at'] ?? 0) - ($a['created_at'] ?? 0));
-
-            if (empty($chat_msgs)) die(json_encode(['success' => true]));
-
+            if (empty($chat_msgs)) { echo json_encode(['success' => true]); exit; }
             $last_msg_id = $chat_msgs[0]['id'] ?? null;
-            if (!$last_msg_id) die(json_encode(['success' => true]));
-
+            if (!$last_msg_id) { echo json_encode(['success' => true]); exit; }
             $reads = read_json(READS_FILE);
             if (!isset($reads[$chat_id])) $reads[$chat_id] = [];
             $reads[$chat_id][$user['id']] = $last_msg_id;
             write_json(READS_FILE, $reads);
-
             if (($chat['type'] ?? '') === 'private') {
                 $changed = false;
                 foreach ($messages as &$m) {
                     if (($m['chat_id'] ?? '') === $chat_id && ($m['user_id'] ?? '') !== $user['id']) {
                         $seen_by = $m['seen_by'] ?? [];
-                        if (!in_array($user['id'], $seen_by)) {
-                            $seen_by[] = $user['id'];
-                            $m['seen_by'] = $seen_by;
-                            $changed = true;
-                        }
+                        if (!in_array($user['id'], $seen_by)) { $seen_by[] = $user['id']; $m['seen_by'] = $seen_by; $changed = true; }
                     }
                 }
                 unset($m);
                 if ($changed) write_json(MESSAGES_FILE, $messages);
             }
-
             echo json_encode(['success' => true]);
             exit;
-
         case 'send_message':
             $chat_id = $_POST['chat_id'] ?? '';
             $text = trim($_POST['text'] ?? '');
             $caption = trim($_POST['caption'] ?? '');
-
             $has_file = isset($_FILES['file']) && $_FILES['file']['error'] !== UPLOAD_ERR_NO_FILE;
-
-            if ($has_file && $_FILES['file']['error'] !== 0) {
-                die(json_encode(['error' => 'خطا در آپلود فایل']));
-            }
-
-            if (!$has_file && $text === '') {
-                die(json_encode(['error' => 'پیام خالی است']));
-            }
-
+            if ($has_file && $_FILES['file']['error'] !== 0) { $err = $_FILES['file']['error']; $msg = ($err == UPLOAD_ERR_INI_SIZE || $err == UPLOAD_ERR_FORM_SIZE) ? 'حجم فایل بیشتر از حد مجاز سرور است' : 'خطا در آپلود فایل'; echo json_encode(['error' => $msg]); exit; }
+            if (!$has_file && $text === '') { echo json_encode(['error' => 'پیام خالی است']); exit; }
             $chats = read_json(CHATS_FILE);
             $chat = null;
-            foreach ($chats as $c) if ($c['id'] === $chat_id) { $chat = $c; break; }
-
-            if (!$chat || !in_array($user['id'], $chat['members'] ?? [])) {
-                die(json_encode(['error' => 'دسترسی غیرمجاز است']));
-            }
-
-            if (($chat['type'] ?? '') === 'channel' && ($chat['owner_id'] ?? '') !== $user['id'] && empty($user['is_admin'])) {
-                die(json_encode(['error' => 'فقط مالک کانال می‌تواند پیام ارسال کند']));
-            }
-
+            foreach ($chats as $c) { if ($c['id'] === $chat_id) { $chat = $c; break; } }
+            if (!$chat || !in_array($user['id'], $chat['members'] ?? [])) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+            if (($chat['type'] ?? '') === 'channel' && ($chat['owner_id'] ?? '') !== $user['id'] && empty($user['is_admin'])) { echo json_encode(['error' => 'فقط مالک کانال می‌تواند پیام ارسال کند']); exit; }
             $file_path = null;
             $file_type = null;
             $file_name = null;
-
             if ($has_file) {
+                $max_mb = is_premium_user($user) ? PREMIUM_MAX_UPLOAD_MB : NORMAL_MAX_UPLOAD_MB;
+                $max_bytes = $max_mb * 1024 * 1024;
+                if ($_FILES['file']['size'] > $max_bytes) {
+                    echo json_encode(['error' => 'حجم فایل بیشتر از حد مجاز (' . $max_mb . ' مگابایت) است']);
+                    exit;
+                }
                 if ($caption === '' && $text !== '') $caption = $text;
                 $f = $_FILES['file'];
                 $ext = pathinfo($f['name'], PATHINFO_EXTENSION);
                 $safe_name = generate_id() . ($ext !== '' ? '.' . $ext : '');
                 $dest = UPLOADS_DIR . '/' . $safe_name;
-
-                if (!move_uploaded_file($f['tmp_name'], $dest)) {
-                    die(json_encode(['error' => 'ذخیره فایل ناموفق بود']));
-                }
-
+                if (!move_uploaded_file($f['tmp_name'], $dest)) { echo json_encode(['error' => 'ذخیره فایل ناموفق بود']); exit; }
                 $file_path = 'data/uploads/' . $safe_name;
                 $file_name = $f['name'];
-
                 $mime = @mime_content_type($dest);
-                if ($mime && strpos($mime, 'image/') === 0) $file_type = 'image';
-                elseif ($mime && strpos($mime, 'video/') === 0) $file_type = 'video';
-                elseif ($mime && strpos($mime, 'audio/') === 0) $file_type = 'audio';
-                else $file_type = 'file';
+                if ($mime && strpos($mime, 'image/') === 0) $file_type = 'image'; elseif ($mime && strpos($mime, 'video/') === 0) $file_type = 'video'; else $file_type = 'file';
             }
-
-            $link_preview = null;
-            $preview_text = $has_file ? $caption : $text;
-            if ($preview_text !== '') {
-                $urls = extract_urls($preview_text);
-                if (!empty($urls)) {
-                    $link_preview = get_link_preview($urls[0]);
+            $messages = read_json(MESSAGES_FILE);
+            $reply_to_data = null;
+            if (!empty($_POST['reply_to_id'])) {
+                $reply_id = $_POST['reply_to_id'];
+                foreach ($messages as $rm) {
+                    if (($rm['id'] ?? '') === $reply_id && ($rm['chat_id'] ?? '') === $chat_id) {
+                        $reply_to_data = ['id' => $rm['id'], 'username' => $rm['username'] ?? '', 'text' => message_preview($rm)];
+                        break;
+                    }
                 }
             }
-
-            $messages = read_json(MESSAGES_FILE);
-            $msg = [
-                'id' => generate_id(),
-                'chat_id' => $chat_id,
-                'user_id' => $user['id'],
-                'username' => trim($user['name'] ?? '') !== '' ? $user['name'] : $user['username'],
-                'text' => $has_file ? '' : $text,
-                'caption' => $has_file ? $caption : '',
-                'file_path' => $file_path,
-                'file_type' => $file_type,
-                'file_name' => $file_name,
-                'link_preview' => $link_preview,
-                'created_at' => time(),
-                'edited' => false,
-                'seen_by' => [$user['id']]
-            ];
-
+            $message_color = '';
+            if (is_premium_user($user) && !empty($_POST['message_color'])) {
+                $allowed_msg_colors = ['', '#FF6B6B', '#4ECDC4', '#A78BFA', '#F59E0B', '#EC4899', '#10B981', '#3B82F6', '#FFD700', '#FF1493', '#00CED1', '#9370DB'];
+                if (in_array($_POST['message_color'], $allowed_msg_colors)) {
+                    $message_color = $_POST['message_color'];
+                }
+            }
+            $msg = ['id' => generate_id(), 'chat_id' => $chat_id, 'user_id' => $user['id'], 'username' => trim($user['name'] ?? '') !== '' ? $user['name'] : $user['username'], 'text' => $has_file ? '' : $text, 'caption' => $has_file ? $caption : '', 'file_path' => $file_path, 'file_type' => $file_type, 'file_name' => $file_name, 'created_at' => time(), 'edited' => false, 'seen_by' => [$user['id']], 'reactions' => [], 'reply_to' => $reply_to_data, 'is_pinned' => false, 'sender_premium' => is_premium_user($user), 'sender_premium_color' => $user['premium_color'] ?? '', 'sender_verified' => !empty($user['verified']), 'message_color' => $message_color];
             $messages[] = $msg;
             write_json(MESSAGES_FILE, $messages);
-
-            echo json_encode(['success' => true, 'message' => $msg]);
+            echo json_encode(['success' => true, 'message' => $msg], JSON_UNESCAPED_UNICODE);
             exit;
-
+        case 'save_message':
+            $msg_id = $_POST['message_id'] ?? '';
+            $messages = read_json(MESSAGES_FILE);
+            $orig = null;
+            foreach ($messages as $m) { if (($m['id'] ?? '') === $msg_id) { $orig = $m; break; } }
+            if (!$orig) { echo json_encode(['error' => 'پیام یافت نشد']); exit; }
+            $chats = read_json(CHATS_FILE);
+            $orig_chat = null;
+            foreach ($chats as $c) { if (($c['id'] ?? '') === ($orig['chat_id'] ?? '')) { $orig_chat = $c; break; } }
+            if (!$orig_chat || !in_array($user['id'], $orig_chat['members'] ?? [])) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+            $saved = ensure_saved_chat($user);
+            $new = $orig;
+            $new['id'] = generate_id();
+            $new['chat_id'] = $saved['id'];
+            $new['user_id'] = $user['id'];
+            $new['username'] = trim($user['name'] ?? '') !== '' ? $user['name'] : $user['username'];
+            $new['created_at'] = time();
+            $new['edited'] = false;
+            $new['seen_by'] = [$user['id']];
+            $new['saved_from'] = $orig['username'] ?? '';
+            $new['reactions'] = [];
+            $messages[] = $new;
+            write_json(MESSAGES_FILE, $messages);
+            echo json_encode(['success' => true]);
+            exit;
+        case 'react_to_message':
+            $msg_id = $_POST['message_id'] ?? '';
+            $emoji = trim($_POST['emoji'] ?? '');
+            $allowed_emojis = ['👍', '❤️', '😂', '😮', '😢', '🔥', '🎉', '👏', '🤔', '😍'];
+            if (!in_array($emoji, $allowed_emojis)) { echo json_encode(['error' => 'ایموجی نامعتبر است']); exit; }
+            $messages = read_json(MESSAGES_FILE);
+            $changed = false;
+            foreach ($messages as &$m) {
+                if (($m['id'] ?? '') === $msg_id) {
+                    $chats = read_json(CHATS_FILE);
+                    $chat = null;
+                    foreach ($chats as $c) { if ($c['id'] === ($m['chat_id'] ?? '')) { $chat = $c; break; } }
+                    if (!$chat || !in_array($user['id'], $chat['members'] ?? [])) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+                    $reactions = $m['reactions'] ?? [];
+                    if (!isset($reactions[$emoji])) $reactions[$emoji] = [];
+                    if (in_array($user['id'], $reactions[$emoji])) {
+                        $reactions[$emoji] = array_values(array_diff($reactions[$emoji], [$user['id']]));
+                        if (empty($reactions[$emoji])) unset($reactions[$emoji]);
+                    } else {
+                        $reactions[$emoji][] = $user['id'];
+                    }
+                    $m['reactions'] = $reactions;
+                    $changed = true;
+                    break;
+                }
+            }
+            unset($m);
+            if ($changed) write_json(MESSAGES_FILE, $messages);
+            echo json_encode(['success' => true]);
+            exit;
+        case 'forward_message':
+            $chat_id = $_POST['chat_id'] ?? '';
+            $msg_id = $_POST['message_id'] ?? '';
+            if (!$chat_id || !$msg_id) { echo json_encode(['error' => 'پارامترها نامعتبر است']); exit; }
+            $chats = read_json(CHATS_FILE);
+            $target_chat = null;
+            foreach ($chats as $c) { if ($c['id'] === $chat_id) { $target_chat = $c; break; } }
+            if (!$target_chat || !in_array($user['id'], $target_chat['members'] ?? [])) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+            if (($target_chat['type'] ?? '') === 'channel' && ($target_chat['owner_id'] ?? '') !== $user['id'] && empty($user['is_admin'])) { echo json_encode(['error' => 'فقط مالک کانال می‌تواند پیام ارسال کند']); exit; }
+            $messages = read_json(MESSAGES_FILE);
+            $orig = null;
+            foreach ($messages as $m) { if (($m['id'] ?? '') === $msg_id) { $orig = $m; break; } }
+            if (!$orig) { echo json_encode(['error' => 'پیام یافت نشد']); exit; }
+            $orig_chat = null;
+            foreach ($chats as $c) { if ($c['id'] === ($orig['chat_id'] ?? '')) { $orig_chat = $c; break; } }
+            if (!$orig_chat || !in_array($user['id'], $orig_chat['members'] ?? [])) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+            $new_msg = $orig;
+            $new_msg['id'] = generate_id();
+            $new_msg['chat_id'] = $chat_id;
+            $new_msg['user_id'] = $user['id'];
+            $new_msg['username'] = trim($user['name'] ?? '') !== '' ? $user['name'] : $user['username'];
+            $new_msg['created_at'] = time();
+            $new_msg['edited'] = false;
+            $new_msg['seen_by'] = [$user['id']];
+            $new_msg['forwarded_from'] = $orig['username'] ?? 'نامشخص';
+            $new_msg['reactions'] = [];
+            $messages[] = $new_msg;
+            write_json(MESSAGES_FILE, $messages);
+            echo json_encode(['success' => true, 'message' => $new_msg], JSON_UNESCAPED_UNICODE);
+            exit;
         case 'edit_message':
             $msg_id = $_POST['message_id'] ?? '';
             $text = trim($_POST['text'] ?? '');
-
             $messages = read_json(MESSAGES_FILE);
             $found = false;
-
             foreach ($messages as &$m) {
                 if (($m['id'] ?? '') === $msg_id) {
-                    if (($m['user_id'] ?? '') !== $user['id'] && empty($user['is_admin'])) {
-                        die(json_encode(['error' => 'دسترسی غیرمجاز است']));
-                    }
-
-                    if (!empty($m['file_path'])) {
-                        $m['caption'] = $text;
-                        $m['text'] = '';
-                    } else {
-                        $m['text'] = $text;
-                        $m['caption'] = '';
-                    }
-
+                    if (($m['user_id'] ?? '') !== $user['id'] && empty($user['is_admin'])) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+                    if (!empty($m['file_path'])) { $m['caption'] = $text; $m['text'] = ''; } else { $m['text'] = $text; $m['caption'] = ''; }
                     $m['edited'] = true;
-
-                    $m['link_preview'] = null;
-                    $urls = extract_urls($text);
-                    if (!empty($urls)) {
-                        $m['link_preview'] = get_link_preview($urls[0]);
-                    }
-
                     $found = true;
                     break;
                 }
             }
             unset($m);
-
-            if (!$found) die(json_encode(['error' => 'پیام یافت نشد']));
-
+            if (!$found) { echo json_encode(['error' => 'پیام یافت نشد']); exit; }
             write_json(MESSAGES_FILE, $messages);
             echo json_encode(['success' => true]);
             exit;
-
         case 'delete_message':
             $msg_id = $_POST['message_id'] ?? '';
             $messages = read_json(MESSAGES_FILE);
             $chats = read_json(CHATS_FILE);
             $new_msgs = [];
-
             foreach ($messages as $m) {
                 if (($m['id'] ?? '') === $msg_id) {
                     $chat = null;
-                    foreach ($chats as $c) if ($c['id'] === ($m['chat_id'] ?? '')) { $chat = $c; break; }
-
+                    foreach ($chats as $c) { if ($c['id'] === ($m['chat_id'] ?? '')) { $chat = $c; break; } }
                     $is_owner = $chat && ($chat['owner_id'] ?? '') === $user['id'];
-                    if (($m['user_id'] ?? '') !== $user['id'] && !$is_owner && empty($user['is_admin'])) {
-                        die(json_encode(['error' => 'دسترسی غیرمجاز است']));
-                    }
-
+                    if (($m['user_id'] ?? '') !== $user['id'] && !$is_owner && empty($user['is_admin'])) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
                     unlink_message_file($m);
                     continue;
                 }
                 $new_msgs[] = $m;
             }
-
             write_json(MESSAGES_FILE, $new_msgs);
             echo json_encode(['success' => true]);
             exit;
-
-        case 'upload_user_avatar':
-            if (!isset($_FILES['avatar']) || $_FILES['avatar']['error'] !== 0) {
-                die(json_encode(['error' => 'فایلی انتخاب نشده است']));
-            }
-
-            $f = $_FILES['avatar'];
-            $ext = strtolower(pathinfo($f['name'], PATHINFO_EXTENSION));
-            $allowed = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-            if (!in_array($ext, $allowed)) die(json_encode(['error' => 'فرمت فایل نامعتبر است']));
-
-            $safe_name = $user['id'] . '_' . generate_id() . '.' . $ext;
-            $dest = AVATARS_DIR . '/' . $safe_name;
-
-            if (!move_uploaded_file($f['tmp_name'], $dest)) {
-                die(json_encode(['error' => 'ذخیره فایل ناموفق بود']));
-            }
-
-            $old = $user['avatar'] ?? '';
-            if ($old !== '') {
-                $old_path = __DIR__ . '/' . ltrim($old, '/');
-                if (is_file($old_path)) @unlink($old_path);
-            }
-
-            $avatar_path = 'data/avatars/' . $safe_name;
-
-            $users = read_json(USERS_FILE);
-            foreach ($users as &$u) {
-                if ($u['id'] === $user['id']) {
-                    $u['avatar'] = $avatar_path;
+        case 'toggle_pin_message':
+            $msg_id = $_POST['message_id'] ?? '';
+            $messages = read_json(MESSAGES_FILE);
+            $changed = false;
+            foreach ($messages as &$m) {
+                if (($m['id'] ?? '') === $msg_id) {
+                    $chats = read_json(CHATS_FILE);
+                    $chat = null;
+                    foreach ($chats as $c) { if ($c['id'] === ($m['chat_id'] ?? '')) { $chat = $c; break; } }
+                    if (!$chat || !in_array($user['id'], $chat['members'] ?? [])) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+                    $m['is_pinned'] = empty($m['is_pinned']);
+                    $changed = true;
                     break;
                 }
             }
+            unset($m);
+            if ($changed) write_json(MESSAGES_FILE, $messages);
+            echo json_encode(['success' => true]);
+            exit;
+        case 'clear_chat':
+            $chat_id = $_POST['chat_id'] ?? '';
+            $chats = read_json(CHATS_FILE);
+            $chat = null;
+            foreach ($chats as $c) { if ($c['id'] === $chat_id) { $chat = $c; break; } }
+            if (!$chat || !in_array($user['id'], $chat['members'] ?? [])) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+            if (($chat['type'] ?? '') !== 'saved' && ($chat['type'] ?? '') !== 'private' && ($chat['owner_id'] ?? '') !== $user['id'] && empty($user['is_admin'])) { echo json_encode(['error' => 'فقط مالک یا ادمین می‌تواند تاریخچه را پاک کند']); exit; }
+            $messages = read_json(MESSAGES_FILE);
+            $new_messages = [];
+            foreach ($messages as $m) {
+                if (($m['chat_id'] ?? '') === $chat_id) {
+                    unlink_message_file($m);
+                    continue;
+                }
+                $new_messages[] = $m;
+            }
+            write_json(MESSAGES_FILE, $new_messages);
+            echo json_encode(['success' => true]);
+            exit;
+        case 'add_members_to_chat':
+            $chat_id = $_POST['chat_id'] ?? '';
+            $members = $_POST['members'] ?? [];
+            if ($chat_id === '') { echo json_encode(['error' => 'چت نامعتبر است']); exit; }
+            if (is_string($members)) $members = explode(',', $members);
+            $member_ids = array_filter(array_map('trim', (array)$members));
+            if (empty($member_ids)) { echo json_encode(['error' => 'حداقل یک کاربر انتخاب کنید']); exit; }
+            $chats = read_json(CHATS_FILE);
+            $chat = null;
+            foreach ($chats as $c) { if ($c['id'] === $chat_id) { $chat = $c; break; } }
+            if (!$chat) { echo json_encode(['error' => 'چت یافت نشد']); exit; }
+            if (($chat['owner_id'] ?? '') !== $user['id'] && empty($user['is_admin'])) { echo json_encode(['error' => 'فقط مالک یا ادمین می‌تواند عضو اضافه کند']); exit; }
+            if ($chat['type'] === 'private' || $chat['type'] === 'saved') { echo json_encode(['error' => 'افزودن عضو به این چت ممکن نیست']); exit; }
+            $current_members = $chat['members'] ?? [];
+            $new_members = array_values(array_unique(array_merge($current_members, $member_ids)));
+            foreach ($chats as &$c) { if ($c['id'] === $chat_id) { $c['members'] = $new_members; break; } }
+            unset($c);
+            write_json(CHATS_FILE, $chats);
+            echo json_encode(['success' => true, 'added_count' => count($new_members) - count($current_members)]);
+            exit;
+        case 'remove_member_from_chat':
+            $chat_id = $_POST['chat_id'] ?? '';
+            $target_id = $_POST['user_id'] ?? '';
+            if ($chat_id === '' || $target_id === '') { echo json_encode(['error' => 'پارامترها نامعتبر است']); exit; }
+            $chats = read_json(CHATS_FILE);
+            $chat = null;
+            foreach ($chats as $c) { if ($c['id'] === $chat_id) { $chat = $c; break; } }
+            if (!$chat) { echo json_encode(['error' => 'چت یافت نشد']); exit; }
+            if (($chat['type'] ?? '') === 'private' || ($chat['type'] ?? '') === 'saved') { echo json_encode(['error' => 'حذف عضو از این چت ممکن نیست']); exit; }
+            if (($chat['owner_id'] ?? '') !== $user['id'] && empty($user['is_admin'])) { echo json_encode(['error' => 'فقط مالک یا ادمین می‌تواند عضو را حذف کند']); exit; }
+            if (($chat['owner_id'] ?? '') === $target_id) { echo json_encode(['error' => 'نمی‌توان مالک را حذف کرد']); exit; }
+            if (!in_array($target_id, $chat['members'] ?? [])) { echo json_encode(['error' => 'این کاربر عضو چت نیست']); exit; }
+            foreach ($chats as &$c) { if ($c['id'] === $chat_id) { $c['members'] = array_values(array_diff($c['members'] ?? [], [$target_id])); break; } }
+            unset($c);
+            write_json(CHATS_FILE, $chats);
+            echo json_encode(['success' => true]);
+            exit;
+        case 'upload_user_avatar':
+            if (!isset($_FILES['avatar']) || $_FILES['avatar']['error'] !== 0) { echo json_encode(['error' => 'فایلی انتخاب نشده است']); exit; }
+            $f = $_FILES['avatar'];
+            $ext = strtolower(pathinfo($f['name'], PATHINFO_EXTENSION));
+            $allowed = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+            if (!in_array($ext, $allowed)) { echo json_encode(['error' => 'فرمت فایل نامعتبر است']); exit; }
+            $safe_name = $user['id'] . '_' . generate_id() . '.' . $ext;
+            $dest = AVATARS_DIR . '/' . $safe_name;
+            if (!move_uploaded_file($f['tmp_name'], $dest)) { echo json_encode(['error' => 'ذخیره فایل ناموفق بود']); exit; }
+            $old = $user['avatar'] ?? '';
+            if ($old !== '') { $old_path = __DIR__ . '/' . ltrim($old, '/'); if (is_file($old_path)) @unlink($old_path); }
+            $avatar_path = 'data/avatars/' . $safe_name;
+            $users = read_json(USERS_FILE);
+            foreach ($users as &$u) { if ($u['id'] === $user['id']) { $u['avatar'] = $avatar_path; break; } }
             unset($u);
             write_json(USERS_FILE, $users);
-
             echo json_encode(['success' => true, 'avatar' => $avatar_path]);
             exit;
-
+        case 'remove_user_avatar':
+            $old = $user['avatar'] ?? '';
+            if ($old !== '') { $old_path = __DIR__ . '/' . ltrim($old, '/'); if (is_file($old_path)) @unlink($old_path); }
+            $users = read_json(USERS_FILE);
+            foreach ($users as &$u) { if ($u['id'] === $user['id']) { $u['avatar'] = ''; break; } }
+            unset($u);
+            write_json(USERS_FILE, $users);
+            echo json_encode(['success' => true]);
+            exit;
         case 'upload_chat_avatar':
             $chat_id = $_POST['chat_id'] ?? '';
             $chats = read_json(CHATS_FILE);
             $chat = null;
-            foreach ($chats as $c) if ($c['id'] === $chat_id) { $chat = $c; break; }
-            if (!$chat) die(json_encode(['error' => 'چت یافت نشد']));
-
-            if (($chat['owner_id'] ?? '') !== $user['id'] && empty($user['is_admin'])) {
-                die(json_encode(['error' => 'دسترسی غیرمجاز است']));
-            }
-            if (($chat['type'] ?? '') === 'private') {
-                die(json_encode(['error' => 'تغییر عکس در چت خصوصی ممکن نیست']));
-            }
-
-            if (!isset($_FILES['avatar']) || $_FILES['avatar']['error'] !== 0) {
-                die(json_encode(['error' => 'فایلی انتخاب نشده است']));
-            }
-
+            foreach ($chats as $c) { if ($c['id'] === $chat_id) { $chat = $c; break; } }
+            if (!$chat) { echo json_encode(['error' => 'چت یافت نشد']); exit; }
+            if (($chat['owner_id'] ?? '') !== $user['id'] && empty($user['is_admin'])) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+            if (in_array($chat['type'] ?? '', ['private', 'saved'])) { echo json_encode(['error' => 'تغییر عکس برای این چت ممکن نیست']); exit; }
+            if (!isset($_FILES['avatar']) || $_FILES['avatar']['error'] !== 0) { echo json_encode(['error' => 'فایلی انتخاب نشده است']); exit; }
             $f = $_FILES['avatar'];
             $ext = strtolower(pathinfo($f['name'], PATHINFO_EXTENSION));
             $allowed = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-            if (!in_array($ext, $allowed)) die(json_encode(['error' => 'فرمت فایل نامعتبر است']));
-
+            if (!in_array($ext, $allowed)) { echo json_encode(['error' => 'فرمت فایل نامعتبر است']); exit; }
             $safe_name = $chat_id . '_' . generate_id() . '.' . $ext;
             $dest = AVATARS_DIR . '/' . $safe_name;
-
-            if (!move_uploaded_file($f['tmp_name'], $dest)) {
-                die(json_encode(['error' => 'ذخیره فایل ناموفق بود']));
-            }
-
+            if (!move_uploaded_file($f['tmp_name'], $dest)) { echo json_encode(['error' => 'ذخیره فایل ناموفق بود']); exit; }
             $old = $chat['avatar_image'] ?? '';
-            if ($old !== '') {
-                $old_path = __DIR__ . '/' . ltrim($old, '/');
-                if (is_file($old_path)) @unlink($old_path);
-            }
-
+            if ($old !== '') { $old_path = __DIR__ . '/' . ltrim($old, '/'); if (is_file($old_path)) @unlink($old_path); }
             $avatar_path = 'data/avatars/' . $safe_name;
-
-            foreach ($chats as &$c) {
-                if ($c['id'] === $chat_id) {
-                    $c['avatar_image'] = $avatar_path;
-                    break;
-                }
-            }
+            foreach ($chats as &$c) { if ($c['id'] === $chat_id) { $c['avatar_image'] = $avatar_path; break; } }
             unset($c);
             write_json(CHATS_FILE, $chats);
-
             echo json_encode(['success' => true, 'avatar' => $avatar_path]);
             exit;
-
-        case 'remove_user_avatar':
-            $old = $user['avatar'] ?? '';
-            if ($old !== '') {
-                $old_path = __DIR__ . '/' . ltrim($old, '/');
-                if (is_file($old_path)) @unlink($old_path);
-            }
-
-            $users = read_json(USERS_FILE);
-            foreach ($users as &$u) {
-                if ($u['id'] === $user['id']) {
-                    $u['avatar'] = '';
-                    break;
-                }
-            }
-            unset($u);
-            write_json(USERS_FILE, $users);
-
-            echo json_encode(['success' => true]);
-            exit;
-
         case 'remove_chat_avatar':
             $chat_id = $_POST['chat_id'] ?? '';
             $chats = read_json(CHATS_FILE);
             $chat = null;
-            foreach ($chats as $c) if ($c['id'] === $chat_id) { $chat = $c; break; }
-            if (!$chat) die(json_encode(['error' => 'چت یافت نشد']));
-
-            if (($chat['owner_id'] ?? '') !== $user['id'] && empty($user['is_admin'])) {
-                die(json_encode(['error' => 'دسترسی غیرمجاز است']));
-            }
-
+            foreach ($chats as $c) { if ($c['id'] === $chat_id) { $chat = $c; break; } }
+            if (!$chat) { echo json_encode(['error' => 'چت یافت نشد']); exit; }
+            if (($chat['owner_id'] ?? '') !== $user['id'] && empty($user['is_admin'])) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
             $old = $chat['avatar_image'] ?? '';
-            if ($old !== '') {
-                $old_path = __DIR__ . '/' . ltrim($old, '/');
-                if (is_file($old_path)) @unlink($old_path);
-            }
-
-            foreach ($chats as &$c) {
-                if ($c['id'] === $chat_id) {
-                    $c['avatar_image'] = '';
-                    break;
-                }
-            }
+            if ($old !== '') { $old_path = __DIR__ . '/' . ltrim($old, '/'); if (is_file($old_path)) @unlink($old_path); }
+            foreach ($chats as &$c) { if ($c['id'] === $chat_id) { $c['avatar_image'] = ''; break; } }
             unset($c);
             write_json(CHATS_FILE, $chats);
-
             echo json_encode(['success' => true]);
             exit;
-
         case 'create_chat':
             $type = $_POST['type'] ?? 'group';
             $name = trim($_POST['name'] ?? '');
             $description = trim($_POST['description'] ?? '');
             $members = $_POST['members'] ?? [];
-
-            if (!in_array($type, ['private', 'group', 'channel'])) {
-                die(json_encode(['error' => 'نوع چت نامعتبر است']));
-            }
-
+            if (!in_array($type, ['private', 'group', 'channel'])) { echo json_encode(['error' => 'نوع چت نامعتبر است']); exit; }
             if (is_string($members)) $members = explode(',', $members);
             $member_ids = [];
-            foreach ((array)$members as $mid) {
-                $mid = trim((string)$mid);
-                if ($mid !== '' && $mid !== $user['id']) $member_ids[] = $mid;
-            }
-
+            foreach ((array)$members as $mid) { $mid = trim((string)$mid); if ($mid !== '' && $mid !== $user['id']) $member_ids[] = $mid; }
+            $chats = read_json(CHATS_FILE);
             if ($type === 'private') {
-                if (empty($member_ids)) die(json_encode(['error' => 'یک کاربر انتخاب کنید']));
-                $member_ids = [$user['id'], $member_ids[0]];
+                if (empty($member_ids)) { echo json_encode(['error' => 'یک کاربر انتخاب کنید']); exit; }
+                $target_id = $member_ids[0];
+                foreach ($chats as $c) { if (($c['type'] ?? '') === 'private' && count($c['members'] ?? []) === 2 && in_array($user['id'], $c['members']) && in_array($target_id, $c['members'])) { echo json_encode(['success' => true, 'chat' => $c]); exit; } }
+                $member_ids = [$user['id'], $target_id];
                 $name = '';
             } else {
-                if ($name === '') die(json_encode(['error' => 'نام الزامی است']));
+                if ($name === '') { echo json_encode(['error' => 'نام الزامی است']); exit; }
                 $member_ids = array_values(array_unique(array_merge([$user['id']], $member_ids)));
             }
-
-            $chats = read_json(CHATS_FILE);
-            $chat = [
-                'id' => generate_id(),
-                'type' => $type,
-                'name' => $name,
-                'description' => $description,
-                'owner_id' => $user['id'],
-                'members' => $member_ids,
-                'public_id' => '',
-                'avatar_image' => '',
-                'created_at' => time()
-            ];
-
+            $chat = ['id' => generate_id(), 'type' => $type, 'name' => $name, 'description' => $description, 'owner_id' => $user['id'], 'members' => $member_ids, 'avatar_image' => '', 'verified' => false, 'created_at' => time()];
             $chats[] = $chat;
             write_json(CHATS_FILE, $chats);
-
-            echo json_encode(['success' => true, 'chat' => $chat]);
+            echo json_encode(['success' => true, 'chat' => $chat], JSON_UNESCAPED_UNICODE);
             exit;
-
         case 'update_chat':
             $chat_id = $_POST['chat_id'] ?? '';
             $chats = read_json(CHATS_FILE);
-
             foreach ($chats as &$c) {
                 if (($c['id'] ?? '') === $chat_id) {
-                    if (($c['owner_id'] ?? '') !== $user['id'] && empty($user['is_admin'])) {
-                        die(json_encode(['error' => 'دسترسی غیرمجاز است']));
-                    }
-
+                    if (($c['owner_id'] ?? '') !== $user['id'] && empty($user['is_admin'])) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+                    if (in_array($c['type'] ?? '', ['private', 'saved'])) { echo json_encode(['error' => 'ویرایش این چت ممکن نیست']); exit; }
                     if (isset($_POST['name'])) $c['name'] = trim($_POST['name']);
                     if (isset($_POST['description'])) $c['description'] = trim($_POST['description']);
-
-                    if (isset($_POST['public_id'])) {
-                        $pid = preg_replace('/[^a-zA-Z0-9_]/', '', trim($_POST['public_id']));
-
-                        foreach ($chats as $oc) {
-                            if (($oc['id'] ?? '') !== $chat_id && !empty($oc['public_id']) && $oc['public_id'] === $pid) {
-                                die(json_encode(['error' => 'این آیدی قبلاً استفاده شده است']));
-                            }
-                        }
-
-                        $c['public_id'] = $pid;
-                    }
-
                     break;
                 }
             }
             unset($c);
-
             write_json(CHATS_FILE, $chats);
             echo json_encode(['success' => true]);
             exit;
-
         case 'delete_chat':
             $chat_id = $_POST['chat_id'] ?? '';
             $chats = read_json(CHATS_FILE);
-
             $chat = null;
-            foreach ($chats as $c) if ($c['id'] === $chat_id) { $chat = $c; break; }
-            if (!$chat) die(json_encode(['error' => 'چت یافت نشد']));
-
-            if (($chat['owner_id'] ?? '') !== $user['id'] && empty($user['is_admin'])) {
-                die(json_encode(['error' => 'دسترسی غیرمجاز است']));
-            }
-
+            foreach ($chats as $c) { if ($c['id'] === $chat_id) { $chat = $c; break; } }
+            if (!$chat) { echo json_encode(['error' => 'چت یافت نشد']); exit; }
+            if (($chat['type'] ?? '') === 'saved') { echo json_encode(['error' => 'امکان حذف پیام‌های ذخیره‌شده وجود ندارد']); exit; }
+            if (($chat['owner_id'] ?? '') !== $user['id'] && empty($user['is_admin'])) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
             $old = $chat['avatar_image'] ?? '';
-            if ($old !== '') {
-                $old_path = __DIR__ . '/' . ltrim($old, '/');
-                if (is_file($old_path)) @unlink($old_path);
-            }
-
+            if ($old !== '') { $old_path = __DIR__ . '/' . ltrim($old, '/'); if (is_file($old_path)) @unlink($old_path); }
             delete_chat_data($chat_id);
             echo json_encode(['success' => true]);
             exit;
-
         case 'leave_chat':
             $chat_id = $_POST['chat_id'] ?? '';
             $chats = read_json(CHATS_FILE);
-
             $chat = null;
-            foreach ($chats as $c) if ($c['id'] === $chat_id) { $chat = $c; break; }
-            if (!$chat) die(json_encode(['error' => 'چت یافت نشد']));
-
-            if (($chat['type'] ?? '') === 'private') {
-                delete_chat_data($chat_id);
-                echo json_encode(['success' => true]);
-                exit;
-            }
-
-            if (($chat['owner_id'] ?? '') === $user['id']) {
-                die(json_encode(['error' => 'مالک نمی‌تواند خارج شود. ابتدا چت را حذف کنید']));
-            }
-
-            foreach ($chats as &$c) {
-                if (($c['id'] ?? '') === $chat_id) {
-                    $c['members'] = array_values(array_diff($c['members'] ?? [], [$user['id']]));
-                    break;
-                }
-            }
+            foreach ($chats as $c) { if ($c['id'] === $chat_id) { $chat = $c; break; } }
+            if (!$chat) { echo json_encode(['error' => 'چت یافت نشد']); exit; }
+            if (($chat['type'] ?? '') === 'saved') { echo json_encode(['error' => 'امکان خروج از پیام‌های ذخیره‌شده وجود ندارد']); exit; }
+            if (($chat['type'] ?? '') === 'private') { delete_chat_data($chat_id); echo json_encode(['success' => true]); exit; }
+            if (($chat['owner_id'] ?? '') === $user['id']) { echo json_encode(['error' => 'مالک نمی‌تواند خارج شود. ابتدا چت را حذف کنید']); exit; }
+            foreach ($chats as &$c) { if (($c['id'] ?? '') === $chat_id) { $c['members'] = array_values(array_diff($c['members'] ?? [], [$user['id']])); break; } }
             unset($c);
-
             write_json(CHATS_FILE, $chats);
             echo json_encode(['success' => true]);
             exit;
-
         case 'get_users':
             $users = read_json(USERS_FILE);
             $list = [];
-
             foreach ($users as $u) {
-                if ($u['id'] === $user['id'] || !empty($u['is_bot'])) continue;
+                if ($u['id'] === $user['id']) continue;
                 if (!empty($u['blocked']) || (isset($u['active']) && !$u['active'])) continue;
                 if (isset($u['privacy_searchable']) && !$u['privacy_searchable']) continue;
-
-                $list[] = [
-                    'id' => $u['id'],
-                    'username' => $u['username'],
-                    'name' => $u['name'] ?? '',
-                    'avatar' => $u['avatar'] ?? ''
-                ];
+                $list[] = ['id' => $u['id'], 'username' => $u['username'], 'name' => $u['name'] ?? '', 'avatar' => $u['avatar'] ?? '', 'verified' => !empty($u['verified']), 'premium' => is_premium_user($u), 'premium_color' => $u['premium_color'] ?? ''];
             }
-
-            echo json_encode(['users' => $list]);
+            echo json_encode(['users' => $list], JSON_UNESCAPED_UNICODE);
             exit;
-
         case 'search_users':
             $q = trim($_GET['q'] ?? '');
             $q = ltrim($q, '@');
-            if ($q === '') die(json_encode(['users' => []]));
-
+            if ($q === '') { echo json_encode(['users' => []]); exit; }
             $users = read_json(USERS_FILE);
             $list = [];
-
             foreach ($users as $u) {
-                if (!empty($u['is_bot'])) continue;
                 if (!empty($u['blocked']) || (isset($u['active']) && !$u['active'])) continue;
                 if (isset($u['privacy_searchable']) && !$u['privacy_searchable']) continue;
-
                 if (mb_stripos($u['username'], $q) !== false || mb_stripos($u['name'] ?? '', $q) !== false) {
-                    $list[] = [
-                        'id' => $u['id'],
-                        'username' => $u['username'],
-                        'name' => $u['name'] ?? '',
-                        'avatar' => $u['avatar'] ?? ''
-                    ];
+                    $list[] = ['id' => $u['id'], 'username' => $u['username'], 'name' => $u['name'] ?? '', 'avatar' => $u['avatar'] ?? '', 'verified' => !empty($u['verified']), 'premium' => is_premium_user($u), 'premium_color' => $u['premium_color'] ?? ''];
                 }
             }
-
-            echo json_encode(['users' => $list]);
+            echo json_encode(['users' => $list], JSON_UNESCAPED_UNICODE);
             exit;
-
+        case 'get_user_profile':
+            $uid = $_GET['user_id'] ?? '';
+            $target = find_user_by_id($uid);
+            if (!$target) { echo json_encode(['error' => 'کاربر یافت نشد']); exit; }
+            echo json_encode(['user' => safe_user($target)], JSON_UNESCAPED_UNICODE);
+            exit;
         case 'update_profile':
             $username = trim(ltrim($_POST['username'] ?? '', '@'));
             $name = trim($_POST['name'] ?? '');
             $bio = trim($_POST['bio'] ?? '');
             $privacy_searchable = isset($_POST['privacy_searchable']) ? !empty($_POST['privacy_searchable']) : true;
-
-            if ($username === '') die(json_encode(['error' => 'آیدی نمی‌تواند خالی باشد']));
-            if (username_exists($username, $user['id'])) die(json_encode(['error' => 'این آیدی قبلاً ثبت شده است']));
-
+            $premium_color = trim($_POST['premium_color'] ?? '');
+            $premium_message_sound = !empty($_POST['premium_message_sound']);
+            $premium_animated_avatar = !empty($_POST['premium_animated_avatar']);
+            $premium_hide_last_seen = !empty($_POST['premium_hide_last_seen']);
+            if ($username === '') { echo json_encode(['error' => 'آیدی نمی‌تواند خالی باشد']); exit; }
+            if (username_exists($username, $user['id'])) { echo json_encode(['error' => 'این آیدی قبلاً ثبت شده است']); exit; }
+            $bio_max = is_premium_user($user) ? PREMIUM_BIO_MAX : NORMAL_BIO_MAX;
+            if (mb_strlen($bio) > $bio_max) { echo json_encode(['error' => 'طول بیو نمی‌تواند بیشتر از ' . $bio_max . ' کاراکتر باشد']); exit; }
+            $allowed_colors = ['', '#FFD700', '#FF6B6B', '#4ECDC4', '#A78BFA', '#F59E0B', '#EC4899', '#10B981', '#3B82F6'];
+            if (!in_array($premium_color, $allowed_colors)) $premium_color = '';
             $users = read_json(USERS_FILE);
             $old_username = null;
             foreach ($users as &$u) {
@@ -889,102 +734,270 @@ if (isset($_GET['action'])) {
                     $u['name'] = $name;
                     $u['bio'] = $bio;
                     $u['privacy_searchable'] = $privacy_searchable;
+                    if (is_premium_user($u)) {
+                        $u['premium_color'] = $premium_color;
+                        $u['premium_message_sound'] = $premium_message_sound;
+                        $u['premium_animated_avatar'] = $premium_animated_avatar;
+                        $u['premium_hide_last_seen'] = $premium_hide_last_seen;
+                    }
                     break;
                 }
             }
             unset($u);
-
             write_json(USERS_FILE, $users);
-
-            if ($old_username !== null && $old_username !== $username) {
-                update_messages_username($user['id'], $username);
-            }
-
+            if ($old_username !== null && $old_username !== $username) update_messages_username($user['id'], $username);
             echo json_encode(['success' => true]);
             exit;
-
         case 'change_password':
             $current_password = $_POST['current_password'] ?? '';
             $new_password = $_POST['new_password'] ?? '';
-
-            if (!password_verify($current_password, $user['password'])) {
-                die(json_encode(['error' => 'رمز عبور فعلی اشتباه است']));
-            }
-
-            if (mb_strlen($new_password) < 6) {
-                die(json_encode(['error' => 'رمز جدید باید حداقل ۶ کاراکتر باشد']));
-            }
-
+            if (!password_verify($current_password, $user['password'])) { echo json_encode(['error' => 'رمز عبور فعلی اشتباه است']); exit; }
+            if (mb_strlen($new_password) < 6) { echo json_encode(['error' => 'رمز جدید باید حداقل ۶ کاراکتر باشد']); exit; }
             $users = read_json(USERS_FILE);
+            foreach ($users as &$u) { if ($u['id'] === $user['id']) { $u['password'] = password_hash($new_password, PASSWORD_DEFAULT); break; } }
+            unset($u);
+            write_json(USERS_FILE, $users);
+            echo json_encode(['success' => true]);
+            exit;
+        case 'get_wallet_info':
+            $wallet_config = get_wallet_config();
+            echo json_encode(['success' => true, 'balance' => $user['wallet_balance'] ?? 0, 'spc_to_toman' => $wallet_config['spc_to_toman']], JSON_UNESCAPED_UNICODE);
+            exit;
+        case 'transfer_spc':
+            $to_username = trim(ltrim($_POST['to_username'] ?? '', '@'));
+            $amount = (int)($_POST['amount'] ?? 0);
+            if ($to_username === '') { echo json_encode(['error' => 'نام کاربری مقصد را وارد کنید']); exit; }
+            if ($amount <= 0) { echo json_encode(['error' => 'مقدار باید بیشتر از صفر باشد']); exit; }
+            if ($amount > 1000000) { echo json_encode(['error' => 'حداکثر مقدار انتقال 1,000,000 SPC است']); exit; }
+            $target = find_user_by_username($to_username);
+            if (!$target) { echo json_encode(['error' => 'کاربر مقصد یافت نشد']); exit; }
+            if ($target['id'] === $user['id']) { echo json_encode(['error' => 'نمی‌توانید به خودتان انتقال دهید']); exit; }
+            if (!empty($target['blocked']) || (isset($target['active']) && !$target['active'])) { echo json_encode(['error' => 'کاربر مقصد غیرفعال است']); exit; }
+            $current_balance = $user['wallet_balance'] ?? 0;
+            if ($current_balance < $amount) { echo json_encode(['error' => 'موجودی کافی نیست. موجودی شما: ' . $current_balance . ' SPC']); exit; }
+            $users = read_json(USERS_FILE);
+            $changed = false;
             foreach ($users as &$u) {
                 if ($u['id'] === $user['id']) {
-                    $u['password'] = password_hash($new_password, PASSWORD_DEFAULT);
+                    $u['wallet_balance'] = ($u['wallet_balance'] ?? 0) - $amount;
+                    $changed = true;
+                } elseif ($u['id'] === $target['id']) {
+                    $u['wallet_balance'] = ($u['wallet_balance'] ?? 0) + $amount;
+                    $changed = true;
+                }
+            }
+            unset($u);
+            if ($changed) write_json(USERS_FILE, $users);
+            echo json_encode(['success' => true, 'new_balance' => ($user['wallet_balance'] ?? 0) - $amount, 'message' => 'انتقال ' . $amount . ' SPC به ' . $target['username'] . ' با موفقیت انجام شد'], JSON_UNESCAPED_UNICODE);
+            exit;
+        case 'admin_get_stats':
+            if (!is_admin_user($user)) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+            $users = read_json(USERS_FILE);
+            $chats = read_json(CHATS_FILE);
+            $messages = read_json(MESSAGES_FILE);
+            $premium_count = count(array_filter($users, fn($u) => is_premium_user($u)));
+            $expired_premium_count = count(array_filter($users, fn($u) => !empty($u['premium_until']) && $u['premium_until'] <= time() && empty($u['is_bot'])));
+            $total_spc = array_sum(array_map(fn($u) => $u['wallet_balance'] ?? 0, $users));
+            echo json_encode(['stats' => [
+                'total_users' => count($users),
+                'active_users' => count(array_filter($users, fn($u) => (!isset($u['active']) || !empty($u['active'])) && empty($u['blocked']))),
+                'blocked_users' => count(array_filter($users, fn($u) => !empty($u['blocked']))),
+                'admin_users' => count(array_filter($users, fn($u) => !empty($u['is_admin']))),
+                'bot_users' => count(array_filter($users, fn($u) => !empty($u['is_bot']))),
+                'searchable_users' => count(array_filter($users, fn($u) => !isset($u['privacy_searchable']) || !empty($u['privacy_searchable']))),
+                'premium_users' => $premium_count,
+                'expired_premium_users' => $expired_premium_count,
+                'total_chats' => count($chats),
+                'private_chats' => count(array_filter($chats, fn($c) => ($c['type'] ?? '') === 'private')),
+                'group_chats' => count(array_filter($chats, fn($c) => ($c['type'] ?? '') === 'group')),
+                'channel_chats' => count(array_filter($chats, fn($c) => ($c['type'] ?? '') === 'channel')),
+                'total_messages' => count($messages),
+                'today_messages' => count(array_filter($messages, fn($m) => ($m['created_at'] ?? 0) >= strtotime('today'))),
+                'upload_size' => dir_size(UPLOADS_DIR),
+                'total_spc_in_circulation' => $total_spc,
+            ]]);
+            exit;
+        case 'admin_get_users':
+            if (!is_admin_user($user)) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+            $users = read_json(USERS_FILE);
+            $list = array_map('safe_user', $users);
+            usort($list, fn($a, $b) => ($b['created_at'] ?? 0) - ($a['created_at'] ?? 0));
+            echo json_encode(['users' => $list], JSON_UNESCAPED_UNICODE);
+            exit;
+        case 'admin_get_chats':
+            if (!is_admin_user($user)) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+            $chats = read_json(CHATS_FILE);
+            $users = read_json(USERS_FILE);
+            $messages = read_json(MESSAGES_FILE);
+            $list = [];
+            foreach ($chats as $chat) {
+                $type = $chat['type'] ?? '';
+                if ($type === 'private') continue;
+                $owner = find_user_by_id($chat['owner_id'] ?? '');
+                $chat_msgs = array_filter($messages, fn($m) => ($m['chat_id'] ?? '') === $chat['id']);
+                usort($chat_msgs, fn($a, $b) => ($b['created_at'] ?? 0) - ($a['created_at'] ?? 0));
+                $last = $chat_msgs[0] ?? null;
+                $list[] = [
+                    'id' => $chat['id'],
+                    'type' => $type,
+                    'name' => $chat['name'] ?? '',
+                    'description' => $chat['description'] ?? '',
+                    'owner_id' => $chat['owner_id'] ?? '',
+                    'owner_name' => $owner ? ($owner['name'] ?: $owner['username']) : 'نامشخص',
+                    'owner_username' => $owner ? $owner['username'] : '',
+                    'owner_premium' => $owner ? is_premium_user($owner) : false,
+                    'members_count' => count($chat['members'] ?? []),
+                    'avatar_image' => $chat['avatar_image'] ?? '',
+                    'verified' => !empty($chat['verified']),
+                    'created_at' => $chat['created_at'] ?? time(),
+                    'last_time' => $last ? ($last['created_at'] ?? time()) : ($chat['created_at'] ?? time()),
+                    'last_message' => $last ? mb_substr(message_preview($last), 0, 70) : '',
+                    'messages_count' => count($chat_msgs),
+                ];
+            }
+            usort($list, fn($a, $b) => ($b['last_time'] ?? 0) - ($a['last_time'] ?? 0));
+            echo json_encode(['chats' => $list], JSON_UNESCAPED_UNICODE);
+            exit;
+        case 'admin_toggle_chat_verified':
+            if (!is_admin_user($user)) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+            $chat_id = $_POST['chat_id'] ?? '';
+            $chats = read_json(CHATS_FILE);
+            $new_value = false;
+            foreach ($chats as &$c) {
+                if (($c['id'] ?? '') === $chat_id) {
+                    $c['verified'] = empty($c['verified']);
+                    $new_value = !empty($c['verified']);
+                    break;
+                }
+            }
+            unset($c);
+            write_json(CHATS_FILE, $chats);
+            echo json_encode(['success' => true, 'verified' => $new_value]);
+            exit;
+        case 'admin_delete_chat':
+            if (!is_admin_user($user)) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+            $chat_id = $_POST['chat_id'] ?? '';
+            $chats = read_json(CHATS_FILE);
+            $chat = null;
+            foreach ($chats as $c) { if ($c['id'] === $chat_id) { $chat = $c; break; } }
+            if (!$chat) { echo json_encode(['error' => 'چت یافت نشد']); exit; }
+            if (($chat['type'] ?? '') === 'saved') { echo json_encode(['error' => 'امکان حذف پیام‌های ذخیره‌شده وجود ندارد']); exit; }
+            $old = $chat['avatar_image'] ?? '';
+            if ($old !== '') { $old_path = __DIR__ . '/' . ltrim($old, '/'); if (is_file($old_path)) @unlink($old_path); }
+            delete_chat_data($chat_id);
+            echo json_encode(['success' => true]);
+            exit;
+        case 'admin_get_bot':
+            if (!is_admin_user($user)) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+            $users = read_json(USERS_FILE);
+            $bot = null;
+            foreach ($users as $u) { if (!empty($u['is_bot'])) { $bot = $u; break; } }
+            if (!$bot) { echo json_encode(['error' => 'ربات سیستمی یافت نشد']); exit; }
+            echo json_encode(['bot' => safe_user($bot)], JSON_UNESCAPED_UNICODE);
+            exit;
+        case 'admin_update_bot':
+            if (!is_admin_user($user)) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+            $username = trim(ltrim($_POST['username'] ?? '', '@'));
+            $name = trim($_POST['name'] ?? '');
+            $bio = trim($_POST['bio'] ?? '');
+            if ($username === '') { echo json_encode(['error' => 'آیدی نمی‌تواند خالی باشد']); exit; }
+            if (!preg_match('/^[a-zA-Z0-9_]+$/', $username)) { echo json_encode(['error' => 'آیدی فقط می‌تواند شامل حروف انگلیسی، عدد و _ باشد']); exit; }
+            $users = read_json(USERS_FILE);
+            $bot = null;
+            $bot_id = null;
+            foreach ($users as $u) { if (!empty($u['is_bot'])) { $bot = $u; $bot_id = $u['id']; break; } }
+            if (!$bot) { echo json_encode(['error' => 'ربات سیستمی یافت نشد']); exit; }
+            if (username_exists($username, $bot_id)) { echo json_encode(['error' => 'این آیدی قبلاً ثبت شده است']); exit; }
+            $old_username = $bot['username'];
+            foreach ($users as &$u) {
+                if ($u['id'] === $bot_id) {
+                    $u['username'] = $username;
+                    $u['name'] = $name;
+                    $u['bio'] = $bio;
                     break;
                 }
             }
             unset($u);
-
+            write_json(USERS_FILE, $users);
+            if ($old_username !== $username) update_messages_username($bot_id, $username);
+            echo json_encode(['success' => true]);
+            exit;
+        case 'admin_upload_bot_avatar':
+            if (!is_admin_user($user)) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+            if (!isset($_FILES['avatar']) || $_FILES['avatar']['error'] !== 0) { echo json_encode(['error' => 'فایلی انتخاب نشده است']); exit; }
+            $users = read_json(USERS_FILE);
+            $bot = null;
+            $bot_id = null;
+            foreach ($users as $u) { if (!empty($u['is_bot'])) { $bot = $u; $bot_id = $u['id']; break; } }
+            if (!$bot) { echo json_encode(['error' => 'ربات سیستمی یافت نشد']); exit; }
+            $f = $_FILES['avatar'];
+            $ext = strtolower(pathinfo($f['name'], PATHINFO_EXTENSION));
+            $allowed = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+            if (!in_array($ext, $allowed)) { echo json_encode(['error' => 'فرمت فایل نامعتبر است']); exit; }
+            $safe_name = $bot_id . '_' . generate_id() . '.' . $ext;
+            $dest = AVATARS_DIR . '/' . $safe_name;
+            if (!move_uploaded_file($f['tmp_name'], $dest)) { echo json_encode(['error' => 'ذخیره فایل ناموفق بود']); exit; }
+            $old = $bot['avatar'] ?? '';
+            if ($old !== '') { $old_path = __DIR__ . '/' . ltrim($old, '/'); if (is_file($old_path)) @unlink($old_path); }
+            $avatar_path = 'data/avatars/' . $safe_name;
+            foreach ($users as &$u) { if ($u['id'] === $bot_id) { $u['avatar'] = $avatar_path; break; } }
+            unset($u);
+            write_json(USERS_FILE, $users);
+            echo json_encode(['success' => true, 'avatar' => $avatar_path]);
+            exit;
+        case 'admin_remove_bot_avatar':
+            if (!is_admin_user($user)) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+            $users = read_json(USERS_FILE);
+            $bot_id = null;
+            foreach ($users as $u) { if (!empty($u['is_bot'])) { $bot_id = $u['id']; break; } }
+            if (!$bot_id) { echo json_encode(['error' => 'ربات سیستمی یافت نشد']); exit; }
+            $old = $bot['avatar'] ?? '';
+            foreach ($users as $u) { if ($u['id'] === $bot_id) { $old = $u['avatar'] ?? ''; break; } }
+            if ($old !== '') { $old_path = __DIR__ . '/' . ltrim($old, '/'); if (is_file($old_path)) @unlink($old_path); }
+            foreach ($users as &$u) { if ($u['id'] === $bot_id) { $u['avatar'] = ''; break; } }
+            unset($u);
             write_json(USERS_FILE, $users);
             echo json_encode(['success' => true]);
             exit;
-
-        case 'admin_get_stats':
-            if (!is_admin_user($user)) die(json_encode(['error' => 'دسترسی غیرمجاز است']));
-
-            $users = read_json(USERS_FILE);
-            $chats = read_json(CHATS_FILE);
-            $messages = read_json(MESSAGES_FILE);
-
-            $total_users = count($users);
-            $active_users = count(array_filter($users, fn($u) => (!isset($u['active']) || !empty($u['active'])) && empty($u['blocked'])));
-            $blocked_users = count(array_filter($users, fn($u) => !empty($u['blocked'])));
-            $admin_users = count(array_filter($users, fn($u) => !empty($u['is_admin']) && empty($u['is_bot'])));
-            $bot_users = count(array_filter($users, fn($u) => !empty($u['is_bot'])));
-            $searchable_users = count(array_filter($users, fn($u) => (!isset($u['privacy_searchable']) || !empty($u['privacy_searchable'])) && empty($u['is_bot'])));
-
-            $total_chats = count($chats);
-            $private_chats = count(array_filter($chats, fn($c) => ($c['type'] ?? '') === 'private'));
-            $group_chats = count(array_filter($chats, fn($c) => ($c['type'] ?? '') === 'group'));
-            $channel_chats = count(array_filter($chats, fn($c) => ($c['type'] ?? '') === 'channel'));
-
-            $total_messages = count($messages);
-            $today_start = strtotime('today');
-            $today_messages = count(array_filter($messages, fn($m) => ($m['created_at'] ?? 0) >= $today_start));
-            $upload_size = dir_size(UPLOADS_DIR);
-
-            echo json_encode([
-                'stats' => [
-                    'total_users' => $total_users,
-                    'active_users' => $active_users,
-                    'blocked_users' => $blocked_users,
-                    'admin_users' => $admin_users,
-                    'bot_users' => $bot_users,
-                    'searchable_users' => $searchable_users,
-                    'total_chats' => $total_chats,
-                    'private_chats' => $private_chats,
-                    'group_chats' => $group_chats,
-                    'channel_chats' => $channel_chats,
-                    'total_messages' => $total_messages,
-                    'today_messages' => $today_messages,
-                    'upload_size' => $upload_size,
-                ]
-            ]);
+        case 'admin_set_exchange_rate':
+            if (!is_admin_user($user)) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+            $rate = (int)($_POST['rate'] ?? 0);
+            if ($rate < 1 || $rate > 100000000) { echo json_encode(['error' => 'نرخ تبدیل نامعتبر است (1 تا 100,000,000)']); exit; }
+            $config = get_wallet_config();
+            $config['spc_to_toman'] = $rate;
+            write_json(WALLET_CONFIG_FILE, $config);
+            echo json_encode(['success' => true, 'rate' => $rate]);
             exit;
-
-        case 'admin_get_users':
-            if (!is_admin_user($user)) die(json_encode(['error' => 'دسترسی غیرمجاز است']));
-
+        case 'admin_update_wallet':
+            if (!is_admin_user($user)) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+            $target_id = $_POST['user_id'] ?? '';
+            $action_type = $_POST['wallet_action'] ?? '';
+            $amount = (int)($_POST['amount'] ?? 0);
+            $target = find_user_by_id($target_id);
+            if (!$target) { echo json_encode(['error' => 'کاربر یافت نشد']); exit; }
+            if ($amount < 0) { echo json_encode(['error' => 'مقدار نمی‌تواند منفی باشد']); exit; }
             $users = read_json(USERS_FILE);
-            $list = array_map('safe_user', $users);
-
-            usort($list, fn($a, $b) => ($b['created_at'] ?? 0) - ($a['created_at'] ?? 0));
-
-            echo json_encode(['users' => $list]);
+            $new_balance = 0;
+            foreach ($users as &$u) {
+                if ($u['id'] === $target_id) {
+                    $current = $u['wallet_balance'] ?? 0;
+                    if ($action_type === 'add') {
+                        $u['wallet_balance'] = $current + $amount;
+                    } elseif ($action_type === 'subtract') {
+                        $u['wallet_balance'] = max(0, $current - $amount);
+                    } elseif ($action_type === 'set') {
+                        $u['wallet_balance'] = $amount;
+                    }
+                    $new_balance = $u['wallet_balance'];
+                    break;
+                }
+            }
+            unset($u);
+            write_json(USERS_FILE, $users);
+            echo json_encode(['success' => true, 'new_balance' => $new_balance]);
             exit;
-
         case 'admin_create_user':
-            if (!is_admin_user($user)) die(json_encode(['error' => 'دسترسی غیرمجاز است']));
-
+            if (!is_admin_user($user)) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
             $username = trim(ltrim($_POST['username'] ?? '', '@'));
             $password = $_POST['password'] ?? '';
             $name = trim($_POST['name'] ?? '');
@@ -992,3887 +1005,3274 @@ if (isset($_GET['action'])) {
             $is_admin = !empty($_POST['is_admin']);
             $active = !empty($_POST['active']);
             $privacy_searchable = isset($_POST['privacy_searchable']) ? !empty($_POST['privacy_searchable']) : true;
-
-            if ($username === '') die(json_encode(['error' => 'آیدی الزامی است']));
-            if (mb_strlen($password) < 6) die(json_encode(['error' => 'رمز عبور باید حداقل ۶ کاراکتر باشد']));
-            if (username_exists($username)) die(json_encode(['error' => 'این آیدی قبلاً ثبت شده است']));
-
+            $verified = !empty($_POST['verified']);
+            $premium_days = isset($_POST['premium_days']) ? (int)$_POST['premium_days'] : 0;
+            $initial_wallet = isset($_POST['initial_wallet']) ? (int)$_POST['initial_wallet'] : 0;
+            if ($username === '') { echo json_encode(['error' => 'آیدی الزامی است']); exit; }
+            if (mb_strlen($password) < 6) { echo json_encode(['error' => 'رمز عبور باید حداقل ۶ کاراکتر باشد']); exit; }
+            if (username_exists($username)) { echo json_encode(['error' => 'این آیدی قبلاً ثبت شده است']); exit; }
+            if ($initial_wallet < 0) { echo json_encode(['error' => 'موجودی اولیه نمی‌تواند منفی باشد']); exit; }
             $users = read_json(USERS_FILE);
-            $new_user = [
-                'id' => generate_id(),
-                'username' => $username,
-                'password' => password_hash($password, PASSWORD_DEFAULT),
-                'is_admin' => $is_admin,
-                'active' => $active,
-                'blocked' => false,
-                'is_bot' => false,
-                'name' => $name,
-                'bio' => $bio,
-                'avatar' => '',
-                'privacy_searchable' => $privacy_searchable,
-                'public_id' => '',
-                'privacy_allow_messages' => 'everyone',
-                'created_at' => time()
-            ];
-
+            $premium_until = $premium_days > 0 ? time() + ($premium_days * 86400) : 0;
+            $new_user = ['id' => generate_id(), 'username' => $username, 'password' => password_hash($password, PASSWORD_DEFAULT), 'is_admin' => $is_admin, 'active' => $active, 'blocked' => false, 'is_bot' => false, 'name' => $name, 'bio' => $bio, 'avatar' => '', 'privacy_searchable' => $privacy_searchable, 'created_at' => time(), 'last_activity' => time(), 'verified' => $verified, 'premium_until' => $premium_until, 'premium_color' => '', 'premium_message_sound' => false, 'premium_animated_avatar' => false, 'premium_hide_last_seen' => false, 'wallet_balance' => $initial_wallet];
             $users[] = $new_user;
             write_json(USERS_FILE, $users);
-
-            echo json_encode(['success' => true, 'user' => safe_user($new_user)]);
+            echo json_encode(['success' => true, 'user' => safe_user($new_user)], JSON_UNESCAPED_UNICODE);
             exit;
-
         case 'admin_update_user':
-            if (!is_admin_user($user)) die(json_encode(['error' => 'دسترسی غیرمجاز است']));
-
+            if (!is_admin_user($user)) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
             $target_id = $_POST['user_id'] ?? '';
             $target = find_user_by_id($target_id);
-            if (!$target) die(json_encode(['error' => 'کاربر یافت نشد']));
-
-            if (!empty($target['is_bot'])) {
-                die(json_encode(['error' => 'امکان ویرایش ربات وجود ندارد']));
-            }
-
+            if (!$target) { echo json_encode(['error' => 'کاربر یافت نشد']); exit; }
+            if (!empty($target['is_bot'])) { echo json_encode(['error' => 'برای ویرایش ربات، از بخش ربات خوش‌آمدگویی استفاده کنید']); exit; }
             $username = trim(ltrim($_POST['username'] ?? '', '@'));
-            if ($username === '') die(json_encode(['error' => 'آیدی نمی‌تواند خالی باشد']));
-            if (username_exists($username, $target_id)) die(json_encode(['error' => 'این آیدی قبلاً ثبت شده است']));
-
+            if ($username === '') { echo json_encode(['error' => 'آیدی نمی‌تواند خالی باشد']); exit; }
+            if (username_exists($username, $target_id)) { echo json_encode(['error' => 'این آیدی قبلاً ثبت شده است']); exit; }
             $password = $_POST['password'] ?? '';
-            if ($password !== '' && mb_strlen($password) < 6) {
-                die(json_encode(['error' => 'رمز عبور جدید باید حداقل ۶ کاراکتر باشد']));
+            if ($password !== '' && mb_strlen($password) < 6) { echo json_encode(['error' => 'رمز عبور جدید باید حداقل ۶ کاراکتر باشد']); exit; }
+            $premium_action = $_POST['premium_action'] ?? 'keep';
+            $premium_days = isset($_POST['premium_days']) ? (int)$_POST['premium_days'] : 0;
+            $premium_until = $target['premium_until'] ?? 0;
+            if ($premium_action === 'add_days') {
+                if ($premium_days < 0 || $premium_days > 3650) { echo json_encode(['error' => 'تعداد روزهای پرمیوم نامعتبر است (0 تا 3650)']); exit; }
+                $base_time = $premium_until > time() ? $premium_until : time();
+                $premium_until = $base_time + ($premium_days * 86400);
+            } elseif ($premium_action === 'set_days') {
+                if ($premium_days < 0 || $premium_days > 3650) { echo json_encode(['error' => 'تعداد روزهای پرمیوم نامعتبر است (0 تا 3650)']); exit; }
+                $premium_until = $premium_days > 0 ? time() + ($premium_days * 86400) : 0;
+            } elseif ($premium_action === 'remove') {
+                $premium_until = 0;
             }
-
             $users = read_json(USERS_FILE);
-
             $is_self = $target_id === $user['id'];
-
             if (!$is_self) {
                 $new_admin = !empty($_POST['is_admin']);
-
                 if (!empty($target['is_admin']) && !$new_admin) {
-                    $other_admins = count(array_filter($users, function($u) use ($target_id) {
-                        return $u['id'] !== $target_id
-                            && !empty($u['is_admin'])
-                            && empty($u['is_bot'])
-                            && empty($u['blocked'])
-                            && (!isset($u['active']) || !empty($u['active']));
-                    }));
-
-                    if ($other_admins === 0) {
-                        die(json_encode(['error' => 'نمی‌توان آخرین ادمین را غیرادمین کرد']));
-                    }
+                    $other_admins = count(array_filter($users, function($u) use ($target_id) { return $u['id'] !== $target_id && !empty($u['is_admin']) && empty($u['blocked']) && (!isset($u['active']) || !empty($u['active'])); }));
+                    if ($other_admins === 0) { echo json_encode(['error' => 'نمی‌توان آخرین ادمین را غیرادمین کرد']); exit; }
                 }
             }
-
+            $old_username = $target['username'];
             foreach ($users as &$u) {
                 if ($u['id'] === $target_id) {
-                    $old_username = $u['username'];
-
                     $u['username'] = $username;
                     $u['name'] = trim($_POST['name'] ?? '');
                     $u['bio'] = trim($_POST['bio'] ?? '');
-
-                    if (isset($_POST['privacy_searchable'])) {
-                        $u['privacy_searchable'] = !empty($_POST['privacy_searchable']);
-                    }
-
-                    if ($password !== '') {
-                        $u['password'] = password_hash($password, PASSWORD_DEFAULT);
-                    }
-
-                    if (!$is_self) {
-                        $u['is_admin'] = !empty($_POST['is_admin']);
-                        $u['active'] = !empty($_POST['active']);
-                        $u['blocked'] = !empty($_POST['blocked']);
-                    }
-
+                    if (isset($_POST['privacy_searchable'])) $u['privacy_searchable'] = !empty($_POST['privacy_searchable']);
+                    if ($password !== '') $u['password'] = password_hash($password, PASSWORD_DEFAULT);
+                    if (!$is_self) { $u['is_admin'] = !empty($_POST['is_admin']); $u['active'] = !empty($_POST['active']); $u['blocked'] = !empty($_POST['blocked']); }
+                    $u['verified'] = isset($_POST['verified']) ? !empty($_POST['verified']) : ($u['verified'] ?? false);
+                    $u['premium_until'] = $premium_until;
                     break;
                 }
             }
             unset($u);
-
             write_json(USERS_FILE, $users);
-
-            if ($old_username !== $username) {
-                update_messages_username($target_id, $username);
-            }
-
+            if ($old_username !== $username) update_messages_username($target_id, $username);
             echo json_encode(['success' => true]);
             exit;
-
         case 'admin_delete_user':
-            if (!is_admin_user($user)) die(json_encode(['error' => 'دسترسی غیرمجاز است']));
-
+            if (!is_admin_user($user)) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
             $target_id = $_POST['user_id'] ?? '';
-
-            if ($target_id === $user['id']) {
-                die(json_encode(['error' => 'نمی‌توانید حساب خودتان را حذف کنید']));
-            }
-
+            if ($target_id === $user['id']) { echo json_encode(['error' => 'نمی‌توانید حساب خودتان را حذف کنید']); exit; }
             $target = find_user_by_id($target_id);
-            if (!$target) die(json_encode(['error' => 'کاربر یافت نشد']));
-
-            if (!empty($target['is_bot'])) {
-                die(json_encode(['error' => 'نمی‌توان ربات سیستم را حذف کرد']));
-            }
-
+            if (!$target) { echo json_encode(['error' => 'کاربر یافت نشد']); exit; }
+            if (!empty($target['is_bot'])) { echo json_encode(['error' => 'نمی‌توان ربات سیستم را حذف کرد']); exit; }
             if (!empty($target['is_admin'])) {
                 $users = read_json(USERS_FILE);
-                $other_admins = count(array_filter($users, function($u) use ($target_id) {
-                    return $u['id'] !== $target_id
-                        && !empty($u['is_admin'])
-                        && empty($u['is_bot'])
-                        && empty($u['blocked'])
-                        && (!isset($u['active']) || !empty($u['active']));
-                }));
-
-                if ($other_admins === 0) {
-                    die(json_encode(['error' => 'نمی‌توان آخرین ادمین را حذف کرد']));
-                }
+                $other_admins = count(array_filter($users, function($u) use ($target_id) { return $u['id'] !== $target_id && !empty($u['is_admin']) && empty($u['blocked']) && (!isset($u['active']) || !empty($u['active'])); }));
+                if ($other_admins === 0) { echo json_encode(['error' => 'نمی‌توان آخرین ادمین را حذف کرد']); exit; }
             }
-
             $old = $target['avatar'] ?? '';
-            if ($old !== '') {
-                $old_path = __DIR__ . '/' . ltrim($old, '/');
-                if (is_file($old_path)) @unlink($old_path);
-            }
-
+            if ($old !== '') { $old_path = __DIR__ . '/' . ltrim($old, '/'); if (is_file($old_path)) @unlink($old_path); }
             $chats = read_json(CHATS_FILE);
             $keep_chats = [];
             $delete_chat_ids = [];
-
             foreach ($chats as $c) {
                 $cid = $c['id'] ?? '';
                 $type = $c['type'] ?? '';
                 $members = $c['members'] ?? [];
-
-                if (($c['owner_id'] ?? '') === $target_id && $type !== 'private') {
-                    $delete_chat_ids[] = $cid;
-                    continue;
-                }
-
-                if ($type === 'private' && in_array($target_id, $members)) {
-                    $delete_chat_ids[] = $cid;
-                    continue;
-                }
-
-                if (in_array($target_id, $members)) {
-                    $c['members'] = array_values(array_diff($members, [$target_id]));
-                }
-
+                if (($c['owner_id'] ?? '') === $target_id && $type !== 'private') { $delete_chat_ids[] = $cid; continue; }
+                if ($type === 'private' && in_array($target_id, $members)) { $delete_chat_ids[] = $cid; continue; }
+                if (in_array($target_id, $members)) $c['members'] = array_values(array_diff($members, [$target_id]));
                 $keep_chats[] = $c;
             }
-
             write_json(CHATS_FILE, $keep_chats);
-
             $messages = read_json(MESSAGES_FILE);
             $keep_messages = [];
-
             foreach ($messages as $m) {
-                if (($m['user_id'] ?? '') === $target_id || in_array($m['chat_id'] ?? '', $delete_chat_ids)) {
-                    unlink_message_file($m);
-                    continue;
-                }
+                if (($m['user_id'] ?? '') === $target_id || in_array($m['chat_id'] ?? '', $delete_chat_ids)) { unlink_message_file($m); continue; }
                 $keep_messages[] = $m;
             }
-
             write_json(MESSAGES_FILE, $keep_messages);
-
             $users = read_json(USERS_FILE);
             $new_users = array_values(array_filter($users, fn($u) => $u['id'] !== $target_id));
             write_json(USERS_FILE, $new_users);
-
             echo json_encode(['success' => true]);
             exit;
+        case 'get_chat_members':
+            $chat_id = $_GET['chat_id'] ?? '';
+            if (!$chat_id) { echo json_encode(['error' => 'چت نامعتبر است']); exit; }
+            $chats = read_json(CHATS_FILE);
+            $chat = null;
+            foreach ($chats as $c) { if ($c['id'] === $chat_id) { $chat = $c; break; } }
+            if (!$chat || !in_array($user['id'], $chat['members'] ?? [])) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
+            $members = [];
+            foreach ($chat['members'] as $mid) {
+                $u = find_user_by_id($mid);
+                if (!$u) continue;
+                $status = get_online_status($u);
+                $members[] = ['id' => $u['id'], 'username' => $u['username'], 'name' => $u['name'] ?? '', 'avatar' => $u['avatar'] ?? '', 'online' => $status['online'], 'last_seen_text' => $status['text'], 'is_owner' => ($chat['owner_id'] ?? '') === $u['id'], 'is_admin' => !empty($u['is_admin']), 'is_bot' => !empty($u['is_bot']), 'verified' => !empty($u['verified']), 'premium' => is_premium_user($u), 'premium_color' => $u['premium_color'] ?? ''];
+            }
+            echo json_encode(['members' => $members], JSON_UNESCAPED_UNICODE);
+            exit;
     }
-
     echo json_encode(['error' => 'درخواست نامعتبر است']);
     exit;
 }
-
-if (!file_exists(CONFIG_FILE)) {
-    header('Location: index.php');
-    exit;
-}
-
-$user = current_user();
-if (!$user) {
-    header('Location: index.php');
-    exit;
-}
-
 $safe_user = safe_user($user);
-$LOGO_URL = 'https://abrehamrahi.ir/o/public/xzgiRZSa/';
+$LOGO_URL = 'https://abrehamrahi.ir/o/public/BptxmSLT/';
+$ME_AVATAR_URL = !empty($user['avatar']) ? '?action=serve_file&p=' . urlencode($user['avatar']) : '';
+$wallet_config = get_wallet_config();
 ?>
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<meta name="theme-color" content="#0b1720">
-<title>داشبورد اسپاتیرا | پیام‌رسان</title>
+<title>پیام‌رسان</title>
 <link rel="icon" href="<?= htmlspecialchars($LOGO_URL) ?>">
 <style>
-:root {
-    --bg-main: #0b1720;
-    --bg-card: #152532;
-    --bg-input: #1c3141;
-    --bg-hover: #243a4d;
-    --bg-message-me: #1e5a52;
-    --bg-message-me-2: #174540;
-    --bg-message-other: #1c3141;
-    --text-primary: #e9f3f4;
-    --text-secondary: #8099a8;
-    --accent: #3ddbc4;
-    --accent-strong: #2bc3ad;
-    --accent-soft: #5debd6;
-    --accent-hover: #2bc3ad;
-    --on-accent: #03251f;
-    --border: #22384a;
-    --success: #3ddbc4;
-    --danger: #ff6b6b;
-    --warning: #ffd93d;
-    --info: #5288c1;
-    --line: #22384a;
-    --safe-top: env(safe-area-inset-top, 0px);
-    --safe-bottom: env(safe-area-inset-bottom, 0px);
-}
-
-[data-theme="light"] {
-    --bg-main: #e9f1f0;
-    --bg-card: #ffffff;
-    --bg-input: #f2f7f6;
-    --bg-hover: #eaf1f0;
-    --bg-message-me: #cdeee7;
-    --bg-message-me-2: #bfe8e0;
-    --bg-message-other: #ffffff;
-    --text-primary: #13252c;
-    --text-secondary: #5f7784;
-    --accent: #0aa892;
-    --accent-strong: #08917e;
-    --accent-soft: #15c4ab;
-    --accent-hover: #08917e;
-    --on-accent: #ffffff;
-    --border: #d7e3e1;
-    --success: #0aa892;
-    --danger: #e94e4e;
-    --warning: #f0a500;
-    --info: #3390ec;
-    --line: #d7e3e1;
-}
-
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-    -webkit-tap-highlight-color: transparent;
-    font-family: 'Vazirmatn', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Tahoma, sans-serif;
-}
-
-html, body { height: 100%; overflow: hidden; }
-
-body {
-    background: var(--bg-main);
-    color: var(--text-primary);
-    overflow: hidden;
-    transition: background .4s cubic-bezier(.22,.9,.3,1), color .4s;
-}
-
-.app {
-    display: flex;
-    height: 100vh;
-    height: 100dvh;
-    width: 100%;
-}
-
-.sidebar {
-    width: 340px;
-    background: var(--bg-card);
-    border-left: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    flex-shrink: 0;
-    position: relative;
-    transition: transform .35s cubic-bezier(.22,.9,.3,1), width .3s;
-}
-
-.sidebar-header {
-    padding: 12px 16px;
-    padding-top: calc(12px + var(--safe-top));
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border-bottom: 1px solid var(--border);
-    min-height: 56px;
-    flex-shrink: 0;
-}
-
-.sidebar-header h2 {
-    font-size: 17px;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex: 1;
-    min-width: 0;
-    position: relative;
-}
-
-.sidebar-header h2 .brand-logo-mini {
-    width: 30px;
-    height: 30px;
-    border-radius: 9px;
-    object-fit: cover;
-    background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-    padding: 3px;
-    box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 40%, transparent);
-    flex-shrink: 0;
-}
-
-.sidebar-actions {
-    display: flex;
-    gap: 2px;
-    flex-shrink: 0;
-}
-
-.icon-btn {
-    background: transparent;
-    border: none;
-    color: var(--text-secondary);
-    cursor: pointer;
-    padding: 8px;
-    border-radius: 50%;
-    font-size: 17px;
-    transition: all .2s;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 38px;
-    height: 38px;
-    flex-shrink: 0;
-    position: relative;
-}
-
-.icon-btn:hover {
-    background: var(--bg-hover);
-    color: var(--text-primary);
-}
-
-.icon-btn:active {
-    transform: scale(.94);
-}
-
-.icon-btn.notif-enabled {
-    color: var(--accent);
-}
-
-.notif-badge {
-    position: absolute;
-    top: 2px;
-    right: 2px;
-    min-width: 18px;
-    height: 18px;
-    padding: 0 5px;
-    border-radius: 9px;
-    background: var(--danger);
-    color: #fff;
-    font-size: 10px;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    line-height: 1;
-    animation: pulse-notif 2s ease-in-out infinite;
-}
-
-@keyframes pulse-notif {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.1); }
-}
-
-.user-info {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 16px;
-    border-bottom: 1px solid var(--border);
-    cursor: pointer;
-    transition: background .2s;
-    flex-shrink: 0;
-}
-
-.user-info:hover {
-    background: var(--bg-hover);
-}
-
-.user-avatar {
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--on-accent);
-    font-weight: 600;
-    font-size: 15px;
-    flex-shrink: 0;
-    overflow: hidden;
-    box-shadow: 0 3px 10px color-mix(in srgb, var(--accent) 30%, transparent);
-}
-
-.user-avatar img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-}
-
-.user-details {
-    flex: 1;
-    min-width: 0;
-}
-
-.user-name {
-    font-weight: 600;
-    font-size: 14px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.user-status {
-    font-size: 12px;
-    color: var(--text-secondary);
-}
-
-.search-box {
-    padding: 8px 12px;
-    flex-shrink: 0;
-}
-
-.search-box input {
-    width: 100%;
-    padding: 9px 16px;
-    border-radius: 20px;
-    border: 1px solid var(--border);
-    background: var(--bg-input);
-    color: var(--text-primary);
-    outline: none;
-    font-size: 14px;
-    font-family: inherit;
-    transition: border-color .25s;
-}
-
-.search-box input:focus {
-    border-color: var(--accent);
-}
-
-.chat-list {
-    flex: 1;
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding-bottom: 88px;
-}
-
-.chat-item {
-    padding: 10px 14px;
-    display: flex;
-    gap: 11px;
-    cursor: pointer;
-    transition: background .15s;
-    border-bottom: 1px solid var(--border);
-    align-items: center;
-    position: relative;
-}
-
-.chat-item:hover,
-.chat-item.active {
-    background: var(--bg-hover);
-}
-
-.chat-avatar {
-    width: 46px;
-    height: 46px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--on-accent);
-    font-weight: 600;
-    font-size: 18px;
-    flex-shrink: 0;
-    text-transform: uppercase;
-    overflow: hidden;
-    box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 25%, transparent);
-    position: relative;
-}
-
-.chat-avatar img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-}
-
-.chat-avatar.group { background: linear-gradient(135deg, #ff6b6b, #ee5a52); color: #fff; }
-.chat-avatar.channel { background: linear-gradient(135deg, var(--accent-soft), var(--accent-strong)); color: var(--on-accent); }
-
-.chat-info {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-}
-
-.chat-top {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 8px;
-}
-
-.chat-name {
-    font-weight: 600;
-    font-size: 14.5px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.chat-time {
-    font-size: 11px;
-    color: var(--text-secondary);
-    flex-shrink: 0;
-}
-
-.chat-preview-wrap {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 8px;
-    margin-top: 2px;
-}
-
-.chat-preview {
-    font-size: 12.5px;
-    color: var(--text-secondary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.unread-badge {
-    min-width: 20px;
-    height: 20px;
-    padding: 0 6px;
-    border-radius: 10px;
-    background: var(--accent);
-    color: var(--on-accent);
-    font-size: 11px;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-}
-
-.chat-type-badge {
-    display: inline-block;
-    font-size: 10px;
-    padding: 2px 7px;
-    border-radius: 10px;
-    background: var(--accent);
-    color: var(--on-accent);
-    margin-left: 4px;
-    font-weight: 600;
-}
-
-.msg-ticks {
-    display: inline-flex;
-    align-items: center;
-    gap: 0;
-    margin-right: 3px;
-}
-
-.msg-ticks svg {
-    width: 14px;
-    height: 14px;
-}
-
-.msg-ticks.sent svg {
-    fill: currentColor;
-}
-
-.msg-ticks.delivered svg {
-    fill: currentColor;
-}
-
-.msg-ticks.seen svg {
-    fill: #3ddbc4;
-}
-
-[data-theme="light"] .msg-ticks.seen svg {
-    fill: #08917e;
-}
-
-.fab-container {
-    position: absolute;
-    bottom: 20px;
-    left: 20px;
-    z-index: 50;
-}
-
-.fab-btn {
-    width: 54px;
-    height: 54px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-    border: none;
-    color: var(--on-accent);
-    font-size: 22px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 45%, transparent);
-    transition: all .3s cubic-bezier(.4,0,.2,1);
-    position: relative;
-    z-index: 51;
-}
-
-.fab-btn:hover {
-    transform: scale(1.06);
-    box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 55%, transparent);
-}
-
-.fab-btn.active {
-    background: var(--danger);
-    transform: rotate(45deg);
-    color: #fff;
-}
-
-.fab-btn svg {
-    width: 22px;
-    height: 22px;
-    fill: currentColor;
-    transition: transform .3s;
-}
-
-.fab-btn.active svg {
-    transform: rotate(-45deg);
-}
-
-.fab-menu {
-    position: absolute;
-    bottom: 65px;
-    left: 5px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    pointer-events: none;
-    opacity: 0;
-    transform: translateY(10px) scale(.8);
-    transition: all .3s cubic-bezier(.4,0,.2,1);
-    transform-origin: bottom left;
-}
-
-.fab-container.open .fab-menu {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    pointer-events: all;
-}
-
-.fab-menu-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 16px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 20px;
-    cursor: pointer;
-    white-space: nowrap;
-    box-shadow: 0 2px 8px rgba(0,0,0,.2);
-    transition: all .2s;
-    font-size: 13px;
-    opacity: 0;
-    transform: translateX(-10px) scale(.8);
-}
-
-.fab-container.open .fab-menu-item {
-    opacity: 1;
-    transform: translateX(0) scale(1);
-}
-
-.fab-container.open .fab-menu-item:nth-child(1) { transition-delay: .05s; }
-.fab-container.open .fab-menu-item:nth-child(2) { transition-delay: .1s; }
-.fab-container.open .fab-menu-item:nth-child(3) { transition-delay: .15s; }
-
-.fab-menu-item:hover {
-    background: var(--bg-hover);
-    transform: translateX(-4px) scale(1.02);
-}
-
-.fab-menu-item-icon {
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    color: #fff;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 15px;
-    flex-shrink: 0;
-}
-
-.fab-menu-item-icon.private { background: linear-gradient(135deg, #5288c1, #4a7ab5); }
-.fab-menu-item-icon.group { background: linear-gradient(135deg, #ff6b6b, #ee5a52); }
-.fab-menu-item-icon.channel { background: linear-gradient(135deg, var(--accent-soft), var(--accent-strong)); color: var(--on-accent); }
-
-.chat-area {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    background: var(--bg-main);
-    position: relative;
-    min-width: 0;
-}
-
-.chat-header {
-    padding: 10px 16px;
-    padding-top: calc(10px + var(--safe-top));
-    background: var(--bg-card);
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    min-height: 60px;
-    flex-shrink: 0;
-}
-
-.chat-header-info {
-    flex: 1;
-    min-width: 0;
-}
-
-.chat-header-name {
-    font-weight: 600;
-    font-size: 15.5px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.chat-header-status {
-    font-size: 12px;
-    color: var(--text-secondary);
-}
-
-.empty-state {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-secondary);
-    font-size: 15px;
-    flex-direction: column;
-    gap: 14px;
-    padding: 20px;
-    text-align: center;
-}
-
-.empty-state .emoji {
-    width: 78px;
-    height: 78px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 14px;
-    box-shadow: 0 10px 30px color-mix(in srgb, var(--accent) 30%, transparent);
-    animation: float 3.6s ease-in-out infinite;
-}
-.empty-state .emoji img { width: 100%; height: 100%; object-fit: contain; }
-@keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
-
-.messages {
-    flex: 1;
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    position: relative;
-    min-height: 0;
-}
-
-.messages::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='520' height='520' viewBox='0 0 520 520'%3E%3Cg fill='none' stroke='%233ddbc4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' opacity='.55'%3E%3Crect x='42' y='64' width='124' height='80' rx='20'/%3E%3Cpath d='M74 144l-10 30 36-30'/%3E%3Ccircle cx='79' cy='104' r='3'/%3E%3Ccircle cx='103' cy='104' r='3'/%3E%3Ccircle cx='127' cy='104' r='3'/%3E%3Cpath d='M306 44l58 22-58 22 14-22z'/%3E%3Cpath d='M364 66l34 0'/%3E%3Cpath d='M416 152c0-9 13-15 20-8 7-7 20-1 20 8 0 10-20 22-20 22s-20-12-20-22z'/%3E%3Crect x='62' y='302' width='122' height='82' rx='12'/%3E%3Cpath d='M62 316l61 42 61-42'/%3E%3Cpath d='M326 296l9 24 24 9-24 9-9 24-9-24-24-9 24-9z'/%3E%3Ccircle cx='448' cy='322' r='4'/%3E%3Ccircle cx='212' cy='252' r='4'/%3E%3Crect x='342' y='408' width='116' height='74' rx='18'/%3E%3Cpath d='M432 482l12 26-32-26'/%3E%3Cpath d='M368 436h58M368 454h36'/%3E%3Cpath d='M150 424l8 16 16 8-16 8-8 16-8-16-16-8 16-8z'/%3E%3Ccircle cx='58' cy='208' r='3'/%3E%3Ccircle cx='492' cy='96' r='3'/%3E%3Ccircle cx='258' cy='178' r='3'/%3E%3C/g%3E%3C/svg%3E");
-    background-size: 480px 480px;
-    opacity: .04;
-    pointer-events: none;
-    z-index: 0;
-}
-[data-theme="light"] .messages::before { opacity: .12; filter: brightness(.5); }
-
-.message {
-    max-width: 72%;
-    padding: 9px 13px;
-    border-radius: 14px;
-    position: relative;
-    word-wrap: break-word;
-    animation: fadeIn .25s cubic-bezier(.22,.9,.3,1);
-    z-index: 1;
-    box-shadow: 0 2px 8px rgba(0,0,0,.12);
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-.message.me {
-    background: linear-gradient(135deg, var(--bg-message-me), var(--bg-message-me-2));
-    color: #eafffb;
-    align-self: flex-end;
-    border-bottom-right-radius: 4px;
-}
-[data-theme="light"] .message.me { color: #0c3831; }
-
-.message.other {
-    background: var(--bg-message-other);
-    align-self: flex-start;
-    border-bottom-left-radius: 4px;
-    border: 1px solid var(--border);
-}
-
-.message-meta {
-    font-size: 10px;
-    color: rgba(255,255,255,.7);
-    margin-top: 4px;
-    text-align: left;
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    justify-content: flex-end;
-    direction: ltr;
-}
-[data-theme="light"] .message.me .message-meta { color: rgba(12,56,49,.6); }
-.message.other .message-meta { color: var(--text-secondary); }
-
-.message-text {
-    font-size: 14.5px;
-    line-height: 1.6;
-    white-space: pre-wrap;
-}
-
-.message-text a {
-    color: var(--accent-soft);
-    text-decoration: underline;
-    text-underline-offset: 2px;
-}
-.message.me .message-text a {
-    color: #a8fff0;
-}
-[data-theme="light"] .message.me .message-text a {
-    color: #044d44;
-}
-
-.message-text .mention {
-    color: var(--accent);
-    font-weight: 600;
-    cursor: pointer;
-}
-.message.me .message-text .mention {
-    color: #a8fff0;
-}
-
-.message-file {
-    margin-bottom: 6px;
-}
-
-.message-file img,
-.message-file video {
-    max-width: 100%;
-    max-height: 320px;
-    border-radius: 10px;
-    display: block;
-}
-
-.message-file a {
-    color: var(--accent);
-    text-decoration: none;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-weight: 500;
-}
-
-.link-preview-card {
-    margin-top: 8px;
-    background: rgba(255,255,255,.08);
-    border-radius: 10px;
-    overflow: hidden;
-    border: 1px solid rgba(255,255,255,.12);
-    cursor: pointer;
-    transition: all .2s;
-    max-width: 100%;
-    display: block;
-    text-decoration: none;
-    color: inherit;
-}
-.message.other .link-preview-card {
-    background: var(--bg-hover);
-    border-color: var(--border);
-}
-
-.link-preview-card:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0,0,0,.2);
-}
-
-.link-preview-image {
-    width: 100%;
-    height: 140px;
-    object-fit: cover;
-    display: block;
-    background: rgba(0,0,0,.2);
-}
-
-.link-preview-content {
-    padding: 10px 12px;
-}
-
-.link-preview-site {
-    font-size: 11px;
-    color: var(--accent);
-    margin-bottom: 4px;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: .3px;
-}
-
-.link-preview-title {
-    font-size: 13px;
-    font-weight: 600;
-    line-height: 1.4;
-    margin-bottom: 4px;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-}
-
-.link-preview-desc {
-    font-size: 11.5px;
-    color: var(--text-secondary);
-    line-height: 1.4;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-}
-.message.me .link-preview-desc {
-    color: rgba(255,255,255,.75);
-}
-[data-theme="light"] .message.me .link-preview-desc {
-    color: rgba(12,56,49,.7);
-}
-
-.message-actions-inline {
-    display: flex;
-    gap: 4px;
-    margin-top: 6px;
-    opacity: 0.75;
-    justify-content: flex-end;
-    flex-wrap: wrap;
-}
-
-.message.other .message-actions-inline {
-    justify-content: flex-start;
-}
-
-.msg-action-inline {
-    background: transparent;
-    border: none;
-    color: inherit;
-    font-size: 11px;
-    cursor: pointer;
-    padding: 3px 8px;
-    border-radius: 8px;
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    transition: all .15s;
-    font-family: inherit;
-    font-weight: 500;
-    line-height: 1;
-}
-
-.msg-action-inline:hover {
-    background: rgba(255,255,255,.12);
-    opacity: 1;
-}
-
-.message.other .msg-action-inline:hover {
-    background: var(--bg-hover);
-}
-
-.msg-action-inline.danger {
-    color: var(--danger);
-}
-
-.message.me .msg-action-inline.danger {
-    color: #ffb3b3;
-}
-
-.voice-msg {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 6px 4px;
-    min-width: 220px;
-}
-
-.voice-play-btn {
-    width: 38px;
-    height: 38px;
-    border-radius: 50%;
-    background: var(--accent);
-    color: var(--on-accent);
-    border: none;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    transition: transform .2s;
-    font-size: 14px;
-}
-.voice-play-btn:hover { transform: scale(1.08); }
-.message.me .voice-play-btn { background: rgba(255,255,255,.25); color: #fff; }
-
-.voice-waveform {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    height: 32px;
-    min-width: 0;
-}
-.voice-waveform .bar {
-    flex: 1;
-    background: currentColor;
-    opacity: .4;
-    border-radius: 2px;
-    min-width: 2px;
-    max-width: 4px;
-    transition: opacity .15s;
-}
-.voice-waveform .bar.played { opacity: 1; }
-
-.voice-time {
-    font-size: 11px;
-    color: var(--text-secondary);
-    flex-shrink: 0;
-    min-width: 32px;
-    text-align: center;
-}
-.message.me .voice-time { color: rgba(255,255,255,.75); }
-[data-theme="light"] .message.me .voice-time { color: rgba(12,56,49,.6); }
-
-.message-edited {
-    font-style: italic;
-    font-size: 10px;
-}
-
-.message-input-wrap {
-    padding: 10px 14px;
-    padding-bottom: calc(10px + var(--safe-bottom));
-    background: var(--bg-card);
-    border-top: 1px solid var(--border);
-    flex-shrink: 0;
-}
-
-.message-input {
-    display: flex;
-    align-items: flex-end;
-    gap: 6px;
-    position: relative;
-}
-
-.attach-btn, .voice-btn {
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    border: none;
-    background: transparent;
-    color: var(--text-secondary);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all .2s;
-    flex-shrink: 0;
-    font-size: 18px;
-}
-
-.attach-btn:hover, .voice-btn:hover {
-    background: var(--bg-hover);
-    color: var(--accent);
-}
-
-.attach-btn:active, .voice-btn:active {
-    transform: scale(.92);
-}
-
-.voice-btn.recording {
-    color: var(--danger);
-    background: rgba(255,107,107,.15);
-    animation: pulse-rec 1s ease-in-out infinite;
-}
-
-@keyframes pulse-rec {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(255,107,107,.5); }
-    50% { box-shadow: 0 0 0 8px rgba(255,107,107,0); }
-}
-
-.message-input textarea {
-    flex: 1;
-    padding: 10px 16px;
-    border-radius: 22px;
-    border: 1px solid var(--border);
-    background: var(--bg-input);
-    color: var(--text-primary);
-    outline: none;
-    font-size: 14px;
-    resize: none;
-    max-height: 120px;
-    min-height: 40px;
-    font-family: inherit;
-    line-height: 1.5;
-    transition: border-color .2s;
-    min-width: 0;
-}
-
-.message-input textarea:focus {
-    border-color: var(--accent);
-}
-
-.send-btn {
-    background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-    border: none;
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    cursor: pointer;
-    color: var(--on-accent);
-    font-size: 16px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all .2s;
-    flex-shrink: 0;
-    box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 40%, transparent);
-}
-
-.send-btn:hover {
-    transform: scale(1.06);
-    box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 55%, transparent);
-}
-
-.send-btn:active { transform: scale(.94); }
-
-.send-btn:disabled {
-    opacity: .5;
-    cursor: not-allowed;
-    transform: none !important;
-}
-
-.recording-ui {
-    display: none;
-    align-items: center;
-    gap: 10px;
-    flex: 1;
-    padding: 6px 10px;
-    background: rgba(255,107,107,.1);
-    border-radius: 20px;
-    border: 1px solid rgba(255,107,107,.3);
-    min-width: 0;
-}
-
-.recording-ui.active { display: flex; }
-
-.rec-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: var(--danger);
-    animation: blink-rec 1s ease-in-out infinite;
-    flex-shrink: 0;
-}
-@keyframes blink-rec {
-    0%, 100% { opacity: 1; }
-    50% { opacity: .3; }
-}
-
-.rec-waves {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 3px;
-    height: 24px;
-    min-width: 0;
-}
-.rec-waves .wbar {
-    flex: 1;
-    background: var(--danger);
-    border-radius: 2px;
-    min-width: 2px;
-    max-width: 4px;
-    animation: wave-dance .6s ease-in-out infinite;
-}
-@keyframes wave-dance {
-    0%, 100% { height: 20%; }
-    50% { height: 100%; }
-}
-.rec-waves .wbar:nth-child(1) { animation-delay: 0s; }
-.rec-waves .wbar:nth-child(2) { animation-delay: .1s; }
-.rec-waves .wbar:nth-child(3) { animation-delay: .2s; }
-.rec-waves .wbar:nth-child(4) { animation-delay: .3s; }
-.rec-waves .wbar:nth-child(5) { animation-delay: .4s; }
-.rec-waves .wbar:nth-child(6) { animation-delay: .5s; }
-.rec-waves .wbar:nth-child(7) { animation-delay: .6s; }
-
-.rec-time {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--danger);
-    flex-shrink: 0;
-    min-width: 40px;
-    text-align: center;
-    direction: ltr;
-}
-
-.rec-cancel {
-    background: transparent;
-    border: none;
-    color: var(--danger);
-    cursor: pointer;
-    padding: 6px 10px;
-    border-radius: 12px;
-    font-size: 13px;
-    font-weight: 500;
-    transition: background .2s;
-    font-family: inherit;
-}
-.rec-cancel:hover { background: rgba(255,107,107,.1); }
-
-.attach-popup {
-    position: absolute;
-    bottom: 54px;
-    right: 0;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 8px;
-    box-shadow: 0 8px 30px rgba(0,0,0,.3);
-    display: none;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 180px;
-    z-index: 20;
-    animation: popUp .2s cubic-bezier(.22,.9,.3,1);
-}
-.attach-popup.active { display: flex; }
-
-@keyframes popUp {
-    from { opacity: 0; transform: translateY(8px) scale(.95); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-.attach-popup-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
-    border-radius: 10px;
-    cursor: pointer;
-    font-size: 14px;
-    color: var(--text-primary);
-    transition: background .15s;
-    border: none;
-    background: transparent;
-    width: 100%;
-    text-align: right;
-    font-family: inherit;
-}
-.attach-popup-item:hover { background: var(--bg-hover); }
-.attach-popup-item .ico {
-    width: 32px; height: 32px; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 16px; flex-shrink: 0;
-}
-.attach-popup-item .ico.img { background: rgba(255,107,107,.15); color: #ff6b6b; }
-.attach-popup-item .ico.vid { background: rgba(255,217,61,.15); color: #ffd93d; }
-.attach-popup-item .ico.file { background: rgba(82,136,193,.15); color: #5288c1; }
-
-.modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,.65);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
-    display: none;
-    align-items: center;
-    justify-content: center;
-    z-index: 100;
-    padding: 20px;
-}
-
-.modal-overlay.active {
-    display: flex;
-}
-
-.modal {
-    background: var(--bg-card);
-    border-radius: 16px;
-    padding: 24px;
-    max-width: 460px;
-    width: 100%;
-    max-height: 90vh;
-    overflow-y: auto;
-    border: 1px solid var(--border);
-    box-shadow: 0 20px 60px rgba(0,0,0,.4);
-    animation: modalIn .3s cubic-bezier(.22,.9,.3,1);
-}
-
-@keyframes modalIn {
-    from { opacity: 0; transform: translateY(20px) scale(.95); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-.modal.large {
-    max-width: 920px;
-}
-
-.modal h3 {
-    margin-bottom: 16px;
-    font-size: 17px;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.modal-field {
-    margin-bottom: 14px;
-}
-
-.modal-field label {
-    display: block;
-    margin-bottom: 6px;
-    font-size: 13px;
-    color: var(--text-secondary);
-    font-weight: 500;
-}
-
-.modal-field input,
-.modal-field textarea,
-.modal-field select {
-    width: 100%;
-    padding: 10px 14px;
-    border-radius: 10px;
-    border: 1px solid var(--border);
-    background: var(--bg-input);
-    color: var(--text-primary);
-    outline: none;
-    font-size: 14px;
-    font-family: inherit;
-    transition: border-color .2s;
-}
-
-.modal-field input:focus,
-.modal-field textarea:focus,
-.modal-field select:focus {
-    border-color: var(--accent);
-}
-
-.modal-field textarea {
-    min-height: 80px;
-    resize: vertical;
-}
-
-.modal-actions {
-    display: flex;
-    gap: 10px;
-    justify-content: flex-end;
-    margin-top: 20px;
-    flex-wrap: wrap;
-}
-
-.btn {
-    padding: 10px 20px;
-    border: none;
-    border-radius: 10px;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 600;
-    transition: all .2s;
-    font-family: inherit;
-}
-
-.btn-primary {
-    background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-    color: var(--on-accent);
-}
-
-.btn-primary:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 40%, transparent);
-}
-
-.btn-secondary {
-    background: var(--bg-input);
-    color: var(--text-primary);
-    border: 1px solid var(--border);
-}
-
-.btn-secondary:hover { background: var(--bg-hover); }
-
-.btn-danger {
-    background: var(--danger);
-    color: #fff;
-}
-
-.btn-danger:hover {
-    opacity: .9;
-    transform: translateY(-1px);
-}
-
-.btn-success {
-    background: var(--success);
-    color: var(--on-accent);
-}
-
-.btn-success:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 6px 18px color-mix(in srgb, var(--success) 40%, transparent);
-}
-
-.users-list {
-    max-height: 200px;
-    overflow-y: auto;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 4px;
-    background: var(--bg-input);
-}
-
-.user-option {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 9px 10px;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: background .15s;
-}
-
-.user-option:hover { background: var(--bg-hover); }
-
-.user-option input {
-    width: auto;
-    margin: 0;
-    accent-color: var(--accent);
-}
-
-.user-option-avatar {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-    color: var(--on-accent);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 600;
-    font-size: 13px;
-    flex-shrink: 0;
-    overflow: hidden;
-}
-.user-option-avatar img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-}
-
-.link-box {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    background: var(--bg-input);
-    padding: 8px 12px;
-    border-radius: 10px;
-    margin-top: 8px;
-    border: 1px solid var(--border);
-}
-
-.link-box input {
-    flex: 1;
-    background: transparent;
-    border: none;
-    color: var(--text-primary);
-    outline: none;
-    font-size: 13px;
-    direction: ltr;
-    text-align: left;
-    font-family: inherit;
-}
-
-.copy-btn {
-    background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-    color: var(--on-accent);
-    border: none;
-    padding: 7px 14px;
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 600;
-    transition: transform .15s;
-}
-.copy-btn:hover { transform: translateY(-1px); }
-
-.toast {
-    position: fixed;
-    top: calc(20px + var(--safe-top));
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--bg-card);
-    color: var(--text-primary);
-    padding: 12px 22px;
-    border-radius: 12px;
-    box-shadow: 0 10px 30px rgba(0,0,0,.3);
-    z-index: 1000;
-    display: none;
-    border: 1px solid var(--border);
-    font-weight: 500;
-    max-width: 90%;
-    text-align: center;
-}
-
-.toast.show {
-    display: block;
-    animation: slideDown .3s cubic-bezier(.22,.9,.3,1);
-}
-
-@keyframes slideDown {
-    from { transform: translate(-50%, -50px); opacity: 0; }
-    to { transform: translate(-50%, 0); opacity: 1; }
-}
-
-.stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 10px;
-    margin-bottom: 20px;
-}
-
-.stat-card {
-    background: var(--bg-input);
-    border-radius: 12px;
-    padding: 14px;
-    text-align: center;
-    border: 1px solid var(--border);
-    transition: transform .2s, border-color .2s;
-}
-
-.stat-card:hover {
-    transform: translateY(-2px);
-    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-}
-
-.stat-value {
-    font-size: 22px;
-    font-weight: 800;
-    margin-bottom: 4px;
-    color: var(--accent);
-}
-
-.stat-label {
-    font-size: 12px;
-    color: var(--text-secondary);
-    font-weight: 500;
-}
-
-.table-wrapper {
-    overflow: auto;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    max-height: 420px;
-}
-
-.users-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 13px;
-    min-width: 700px;
-}
-
-.users-table th,
-.users-table td {
-    padding: 11px 10px;
-    border-bottom: 1px solid var(--border);
-    text-align: right;
-    white-space: nowrap;
-}
-
-.users-table th {
-    position: sticky;
-    top: 0;
-    background: var(--bg-card);
-    z-index: 2;
-    font-weight: 700;
-    color: var(--text-secondary);
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: .3px;
-}
-
-.users-table tr:hover td { background: var(--bg-hover); }
-
-.badge {
-    display: inline-block;
-    padding: 3px 10px;
-    border-radius: 20px;
-    font-size: 11px;
-    color: #fff;
-    font-weight: 600;
-}
-
-.badge.success { background: var(--success); color: var(--on-accent); }
-.badge.danger { background: var(--danger); }
-.badge.warning { background: var(--warning); color: #13252c; }
-.badge.info { background: var(--info); }
-.badge.muted { background: #777; }
-
-.checkbox-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 14px;
-}
-
-.checkbox-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 13px;
-    color: var(--text-primary);
-    cursor: pointer;
-    font-weight: 500;
-}
-
-.checkbox-item input {
-    width: auto;
-    margin: 0;
-    accent-color: var(--accent);
-}
-
-.section-title {
-    font-size: 15px;
-    font-weight: 700;
-    margin: 18px 0 10px;
-}
-
-.attachment-preview {
-    background: var(--bg-input);
-    border-radius: 12px;
-    padding: 14px;
-    margin-bottom: 14px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 90px;
-    border: 1px solid var(--border);
-    overflow: hidden;
-}
-
-.attachment-preview img,
-.attachment-preview video {
-    max-width: 100%;
-    max-height: 260px;
-    border-radius: 10px;
-    display: block;
-}
-
-.file-meta {
-    font-size: 12px;
-    color: var(--text-secondary);
-    margin-top: 6px;
-}
-
-.small-note {
-    font-size: 11px;
-    color: var(--text-secondary);
-    margin-top: 5px;
-    line-height: 1.6;
-}
-
-.action-buttons {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-}
-
-.mini-btn {
-    border: none;
-    border-radius: 8px;
-    padding: 6px 10px;
-    cursor: pointer;
-    font-size: 12px;
-    background: var(--bg-input);
-    color: var(--text-primary);
-    transition: all .15s;
-    font-family: inherit;
-    font-weight: 500;
-}
-
-.mini-btn:hover {
-    background: var(--bg-hover);
-    transform: translateY(-1px);
-}
-
-.mini-btn.danger {
-    background: rgba(255,107,107,.15);
-    color: var(--danger);
-}
-
-[data-theme="light"] .mini-btn.danger { background: rgba(233,78,78,.12); }
-
-.profile-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 16px;
-    padding: 12px;
-    background: var(--bg-input);
-    border-radius: 14px;
-    border: 1px solid var(--border);
-}
-
-.profile-avatar {
-    width: 60px;
-    height: 60px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-    color: var(--on-accent);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 26px;
-    font-weight: 700;
-    overflow: hidden;
-    box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 40%, transparent);
-    flex-shrink: 0;
-    position: relative;
-    cursor: pointer;
-    transition: transform .2s;
-}
-.profile-avatar:hover { transform: scale(1.05); }
-.profile-avatar img { width: 100%; height: 100%; object-fit: cover; }
-
-.avatar-upload-overlay {
-    position: absolute;
-    inset: 0;
-    background: rgba(0,0,0,.55);
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0;
-    transition: opacity .2s;
-    color: #fff;
-    font-size: 20px;
-    pointer-events: none;
-}
-.profile-avatar:hover .avatar-upload-overlay,
-.chat-avatar-upload:hover .avatar-upload-overlay {
-    opacity: 1;
-}
-
-.chat-avatar-upload {
-    width: 70px;
-    height: 70px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-    color: var(--on-accent);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 30px;
-    font-weight: 700;
-    overflow: hidden;
-    cursor: pointer;
-    position: relative;
-    transition: transform .2s;
-    margin: 0 auto 12px;
-}
-.chat-avatar-upload:hover { transform: scale(1.05); }
-.chat-avatar-upload img { width: 100%; height: 100%; object-fit: cover; }
-
-.avatar-actions {
-    display: flex;
-    gap: 6px;
-    margin-top: 6px;
-    justify-content: center;
-}
-
-.toggle-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
-    background: var(--bg-input);
-    border-radius: 10px;
-    border: 1px solid var(--border);
-    margin-bottom: 12px;
-    gap: 10px;
-}
-
-.toggle-row-label {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-primary);
-}
-
-.toggle-row-sub {
-    font-size: 11px;
-    color: var(--text-secondary);
-    margin-top: 2px;
-}
-
-.toggle-switch {
-    position: relative;
-    width: 44px;
-    height: 24px;
-    flex-shrink: 0;
-}
-
-.toggle-switch input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-}
-
-.toggle-slider {
-    position: absolute;
-    cursor: pointer;
-    inset: 0;
-    background: var(--border);
-    border-radius: 24px;
-    transition: .25s;
-}
-
-.toggle-slider::before {
-    position: absolute;
-    content: "";
-    height: 18px;
-    width: 18px;
-    right: 3px;
-    bottom: 3px;
-    background: #fff;
-    border-radius: 50%;
-    transition: .25s;
-}
-
-.toggle-switch input:checked + .toggle-slider {
-    background: var(--accent);
-}
-
-.toggle-switch input:checked + .toggle-slider::before {
-    transform: translateX(-20px);
-}
-
-.notif-status-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 10px;
-    padding: 2px 8px;
-    border-radius: 8px;
-    background: rgba(255,107,107,.15);
-    color: var(--danger);
-    font-weight: 600;
-    margin-right: 6px;
-}
-.notif-status-pill.on {
-    background: rgba(61,219,196,.15);
-    color: var(--accent);
-}
-
-.back-btn {
-    display: none;
-}
-
-::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-}
-
-::-webkit-scrollbar-track { background: transparent; }
-
-::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--accent) 40%, transparent);
-    border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--accent) 60%, transparent); }
-
-@media (max-width: 768px) {
-    .sidebar {
-        width: 100%;
-        position: absolute;
-        inset: 0;
-        z-index: 10;
-        transform: translateX(0);
-    }
-
-    .chat-area {
-        position: absolute;
-        inset: 0;
-        z-index: 9;
-        transform: translateX(-100%);
-        transition: transform .35s cubic-bezier(.22,.9,.3,1);
-    }
-
-    .app.show-chat .chat-area {
-        transform: translateX(0);
-        z-index: 11;
-    }
-
-    .back-btn {
-        display: flex !important;
-    }
-
-    .fab-container {
-        bottom: 14px;
-        left: 14px;
-    }
-
-    .fab-btn { width: 50px; height: 50px; }
-
-    .message {
-        max-width: 88%;
-    }
-
-    .modal {
-        max-width: calc(100vw - 32px);
-        padding: 20px;
-        max-height: 85vh;
-    }
-
-    .modal.large {
-        max-width: calc(100vw - 16px);
-    }
-
-    .users-table {
-        font-size: 12px;
-    }
-
-    .users-table th, .users-table td {
-        padding: 8px 6px;
-    }
-}
-
-@media (max-width: 480px) {
-    .sidebar-header { padding: 10px 12px; }
-    .sidebar-header h2 { font-size: 16px; }
-    .user-info { padding: 8px 12px; }
-    .search-box { padding: 6px 10px; }
-    .chat-item { padding: 9px 12px; gap: 10px; }
-    .chat-avatar { width: 42px; height: 42px; font-size: 16px; }
-    .chat-name { font-size: 14px; }
-    .chat-preview { font-size: 12px; }
-
-    .chat-header { padding: 8px 12px; min-height: 56px; }
-    .messages { padding: 10px 8px; }
-    .message { padding: 8px 11px; max-width: 90%; }
-    .message-text { font-size: 14px; }
-    .voice-msg { min-width: 180px; }
-
-    .message-input-wrap { padding: 8px 10px; }
-    .attach-btn, .voice-btn { width: 38px; height: 38px; }
-    .send-btn { width: 38px; height: 38px; }
-    .message-input textarea { padding: 9px 14px; font-size: 14px; }
-
-    .modal { padding: 18px; border-radius: 14px; }
-    .modal h3 { font-size: 16px; }
-    .btn { padding: 9px 16px; font-size: 13px; }
-
-    .empty-state { padding: 16px; gap: 10px; }
-    .empty-state .emoji { width: 64px; height: 64px; padding: 10px; }
-    .empty-state div { font-size: 14px; }
-
-    .attach-popup { min-width: 160px; }
-    .attach-popup-item { font-size: 13px; padding: 8px 10px; }
-
-    .fab-btn { width: 48px; height: 48px; font-size: 20px; }
-    .fab-menu-item { font-size: 12px; padding: 7px 14px; }
-
-    .link-preview-image { height: 100px; }
-}
-
-@media (max-width: 360px) {
-    .message { max-width: 94%; font-size: 13.5px; }
-    .chat-name { font-size: 13.5px; }
-    .chat-time { font-size: 10px; }
-    .icon-btn { width: 34px; height: 34px; padding: 6px; }
-    .sidebar-actions { gap: 0; }
-}
-
-@media (max-height: 500px) and (orientation: landscape) {
-    .sidebar-header { padding: 6px 12px; min-height: 48px; }
-    .user-info { padding: 6px 12px; }
-    .chat-header { padding: 6px 12px; min-height: 48px; }
-    .messages { padding: 8px; }
-    .message-input-wrap { padding: 6px 10px; }
-    .empty-state .emoji { width: 56px; height: 56px; }
+@import url('https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css');
+:root{--bg:#060b11;--panel:rgba(15,24,34,.78);--panel-solid:#0e1822;--card:#131f2c;--card-2:#182836;--input:#1a2a3a;--hover:#20344a;--msg-me:#14544c;--msg-me-2:#0f453f;--msg-other:#16242f;--t1:#eef6f6;--t2:#8aa2b2;--accent:#3ddbc4;--accent-2:#17b09b;--on-accent:#03251f;--border:rgba(255,255,255,.08);--border-strong:rgba(255,255,255,.14);--danger:#ff6b6b;--vip-gold:#FFD700;--vip-gold-2:#FFA500;--spc-green:#10B981;--spc-gold:#F59E0B;--shadow:0 20px 50px rgba(0,0,0,.5)}
+[data-theme="light"]{--bg:#e8eef0;--panel:rgba(255,255,255,.84);--panel-solid:#fff;--card:#fff;--card-2:#f3f8f7;--input:#edf3f2;--hover:#e0ebe9;--msg-me:#cdeee7;--msg-me-2:#bfe8e0;--msg-other:#fff;--t1:#122530;--t2:#5d7684;--accent:#0aa892;--accent-2:#078e7b;--on-accent:#fff;--border:rgba(10,40,50,.09);--border-strong:rgba(10,40,50,.16);--danger:#e94e4e;--vip-gold:#D4AF37;--vip-gold-2:#B8860B;--spc-green:#059669;--spc-gold:#D97706;--shadow:0 20px 50px rgba(20,50,60,.15)}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;font-family:'Vazirmatn',Tahoma,sans-serif}
+html,body{height:100%;overflow:hidden}
+body{background:var(--bg);color:var(--t1);transition:background .35s,color .35s}
+.bg-scene{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+.blob{position:absolute;border-radius:50%;filter:blur(90px);opacity:.45;animation:blobMove 16s ease-in-out infinite alternate}
+.blob-1{width:520px;height:520px;top:-180px;right:-120px;background:radial-gradient(circle,rgba(61,219,196,.32),transparent 70%)}
+.blob-2{width:460px;height:460px;bottom:-160px;left:-100px;background:radial-gradient(circle,rgba(167,139,250,.22),transparent 70%);animation-delay:-5s}
+@keyframes blobMove{from{transform:translate(0,0) scale(1)}to{transform:translate(-45px,35px) scale(1.1)}}
+.app{display:flex;gap:14px;height:100dvh;width:100%;padding:14px;position:relative;z-index:1}
+.sidebar{width:370px;background:var(--panel);backdrop-filter:blur(24px);border:1px solid var(--border);border-radius:26px;display:flex;flex-direction:column;flex-shrink:0;box-shadow:var(--shadow);overflow:hidden;position:relative;animation:fadeSlide .4s ease}
+.sidebar-header{padding:16px 18px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.brand{display:flex;align-items:center;gap:12px;flex:1;min-width:0}
+.brand-logo{width:44px;height:44px;border-radius:15px;padding:5px;object-fit:cover;background:linear-gradient(145deg,#62f7df,#0eb9a2);box-shadow:0 8px 24px rgba(61,219,196,.25);animation:logoFloat 3.5s ease-in-out infinite}
+@keyframes logoFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+.brand-title{font-size:17px;font-weight:800;line-height:1.25}
+.brand-title small{display:block;font-size:10.5px;font-weight:500;color:var(--t2)}
+.header-actions{display:flex;gap:2px}
+.icon-btn{background:transparent;border:none;color:var(--t2);cursor:pointer;padding:8px;border-radius:13px;font-size:18px;transition:.2s;display:flex;align-items:center;justify-content:center;width:38px;height:38px;flex-shrink:0}
+.icon-btn:hover{background:var(--hover);transform:translateY(-1px)}
+.me-card{display:flex;align-items:center;gap:12px;margin:4px 14px 10px;padding:11px 14px;background:linear-gradient(135deg,rgba(61,219,196,.10),rgba(255,255,255,.03));border:1px solid var(--border);border-radius:18px;cursor:pointer;transition:.22s}
+.me-card:hover{transform:translateY(-1px);border-color:rgba(61,219,196,.35)}
+.me-card.premium{background:linear-gradient(135deg,rgba(255,215,0,.15),rgba(255,165,0,.05));border-color:rgba(255,215,0,.35)}
+.avatar{border-radius:50%;background:linear-gradient(145deg,#62f7df,#0eb9a2);display:flex;align-items:center;justify-content:center;color:var(--on-accent);font-weight:800;flex-shrink:0;overflow:hidden}
+.avatar img{width:100%;height:100%;object-fit:cover;display:block}
+.me-card .avatar{width:44px;height:44px;font-size:17px}
+.me-info{flex:1;min-width:0}
+.me-name{font-weight:800;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:5px}
+.me-username{font-size:12px;color:var(--accent);direction:ltr;text-align:right}
+.search-box{padding:0 14px 12px}
+.search-box input{width:100%;padding:12px 16px;border-radius:16px;border:1.5px solid var(--border);background:var(--input);color:var(--t1);outline:none;font-size:13.5px;transition:.22s}
+.search-box input:focus{border-color:rgba(61,219,196,.55);box-shadow:0 0 0 3px rgba(61,219,196,.12)}
+.chat-list{flex:1;overflow-y:auto;overflow-x:hidden;padding:2px 10px 96px;display:flex;flex-direction:column;gap:5px}
+.chat-item{padding:10px 12px;display:flex;gap:12px;cursor:pointer;transition:all .18s ease;border-radius:18px;align-items:center;border:1px solid transparent;animation:fadeUp .25s ease}
+.chat-item:hover{background:var(--hover);transform:translateX(-2px)}
+.chat-item.active{background:rgba(61,219,196,.11);border-color:rgba(61,219,196,.32)}
+.chat-avatar{width:48px;height:48px;border-radius:17px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:18px;flex-shrink:0;overflow:hidden;background:linear-gradient(145deg,#7cc0ff,#2f6fd0);transition:transform .2s}
+.chat-item:hover .chat-avatar{transform:scale(1.05) rotate(-2deg)}
+.chat-avatar img{width:100%;height:100%;object-fit:cover}
+.chat-avatar.group{background:linear-gradient(145deg,#ff9aa8,#e11d48)}
+.chat-avatar.channel{background:linear-gradient(145deg,#7defdd,#0d9c88)}
+.chat-avatar.saved{background:linear-gradient(145deg,#5b9bd5,#3b6fb0)}
+.chat-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.chat-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.chat-name{font-weight:800;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:6px}
+.chat-time{font-size:10.5px;color:var(--t2);flex-shrink:0}
+.chat-preview-wrap{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.chat-preview{font-size:12.5px;color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;display:flex;align-items:center;gap:5px}
+.unread-badge{min-width:22px;height:22px;padding:0 6px;border-radius:11px;background:linear-gradient(145deg,#62f7df,#0eb9a2);color:#04302a;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+.ticks{font-size:11px;opacity:.8}
+.ticks.seen{color:var(--accent);opacity:1}
+.fab-container{position:absolute;bottom:22px;left:22px;z-index:50}
+.fab-btn{width:60px;height:60px;border-radius:21px;background:linear-gradient(145deg,#62f7df,#0eb9a2);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:25px;box-shadow:0 10px 30px rgba(61,219,196,.35);transition:.25s}
+.fab-btn:hover{transform:translateY(-3px) scale(1.04)}
+.fab-menu{position:absolute;bottom:72px;left:4px;display:flex;flex-direction:column;gap:10px;pointer-events:none;opacity:0;transform:translateY(14px);transition:.28s ease}
+.fab-container.open .fab-menu{opacity:1;transform:translateY(0);pointer-events:all}
+.fab-menu-item{display:flex;align-items:center;gap:12px;padding:9px 18px 9px 22px;background:var(--panel);border:1px solid var(--border-strong);border-radius:19px;cursor:pointer;white-space:nowrap;box-shadow:0 10px 28px rgba(0,0,0,.35);animation:popIn .25s ease}
+.fab-mi-icon{width:42px;height:42px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:21px;background:var(--input)}
+.fab-mi-text b{display:block;font-size:13.5px}
+.fab-mi-text span{font-size:11px;color:var(--t2)}
+.chat-area{flex:1;display:flex;flex-direction:column;background:var(--panel);backdrop-filter:blur(24px);border:1px solid var(--border);border-radius:26px;min-width:0;box-shadow:var(--shadow);overflow:hidden;animation:fadeSlide .45s ease}
+.chat-header{padding:12px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;min-height:72px;background:linear-gradient(180deg,rgba(255,255,255,.03),transparent)}
+.chat-header .chat-avatar{width:46px;height:46px;border-radius:15px;cursor:pointer}
+.chat-header-info{flex:1;min-width:0;cursor:pointer}
+.chat-header-name{font-weight:800;font-size:15.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:7px}
+.chat-header-status{font-size:12px;color:var(--t2)}
+.empty-state{flex:1;display:flex;align-items:center;justify-content:center;color:var(--t2);font-size:15px;flex-direction:column;gap:18px;padding:24px;text-align:center;animation:fadeIn .5s ease}
+.empty-logo{width:112px;height:112px;border-radius:36px;padding:20px;background:linear-gradient(145deg,#62f7df,#0eb9a2);display:flex;align-items:center;justify-content:center;box-shadow:0 10px 30px rgba(61,219,196,.25);animation:logoFloat 3.5s ease-in-out infinite}
+.empty-logo img{width:100%;height:100%;object-fit:contain}
+.empty-chips{display:flex;gap:9px;flex-wrap:wrap;justify-content:center}
+.empty-chip{display:inline-flex;align-items:center;gap:7px;padding:8px 15px;border-radius:22px;background:var(--card);border:1px solid var(--border);font-size:12px;color:var(--t2);cursor:pointer;transition:.2s}
+.empty-chip:hover{transform:translateY(-2px);border-color:rgba(61,219,196,.4)}
+.messages{flex:1;overflow-y:auto;overflow-x:hidden;padding:18px 16px;display:flex;flex-direction:column;gap:9px}
+.message{max-width:72%;padding:10px 14px;border-radius:19px;position:relative;word-wrap:break-word;animation:messageSlideIn .35s cubic-bezier(.34,1.56,.64,1)}
+.message.me{background:linear-gradient(135deg,var(--msg-me),var(--msg-me-2));align-self:flex-end;border-bottom-right-radius:7px}
+.message.other{background:var(--msg-other);align-self:flex-start;border-bottom-left-radius:7px;border:1px solid var(--border)}
+.msg-sender{font-size:12px;font-weight:800;color:var(--accent);margin-bottom:4px;cursor:pointer;display:flex;align-items:center;gap:5px}
+.saved-from{font-size:10.5px;color:var(--t2);margin-bottom:5px}
+.message-text{font-size:14.5px;line-height:1.7;white-space:pre-wrap}
+.message-text a{color:#7defdd}
+.message-file{margin-bottom:6px}
+.message-file img,.message-file video{max-width:100%;max-height:320px;border-radius:13px;display:block}
+.file-chip{display:inline-flex;align-items:center;gap:9px;background:rgba(61,219,196,.12);border:1px solid rgba(61,219,196,.25);padding:9px 14px;border-radius:13px;color:var(--t1);text-decoration:none;font-weight:700;font-size:13px;transition:.2s}
+.file-chip:hover{transform:translateY(-1px);background:rgba(61,219,196,.18)}
+.message-meta{font-size:10px;margin-top:5px;display:flex;gap:6px;align-items:center;justify-content:flex-end;direction:ltr;color:var(--t2)}
+.message.me .message-meta{color:rgba(255,255,255,.65)}
+.message-actions-inline{display:flex;gap:4px;margin-top:6px;opacity:.85;justify-content:flex-end;flex-wrap:wrap}
+.message.other .message-actions-inline{justify-content:flex-start}
+.msg-action-inline{background:transparent;border:none;color:inherit;font-size:11px;cursor:pointer;padding:4px 9px;border-radius:9px;display:inline-flex;align-items:center;gap:5px;font-weight:700;transition:.18s}
+.msg-action-inline:hover{background:rgba(255,255,255,.14);transform:translateY(-1px)}
+.msg-action-inline.danger{color:var(--danger)}
+.message-input-wrap{padding:11px 16px;border-top:1px solid var(--border)}
+.message-input{display:flex;align-items:flex-end;gap:7px;position:relative}
+.round-btn{width:44px;height:44px;border-radius:15px;border:none;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:21px;color:var(--t1);transition:.2s}
+.round-btn:hover{background:var(--hover);transform:translateY(-1px)}
+.message-input textarea{flex:1;padding:12px 18px;border-radius:23px;border:1.5px solid var(--border);background:var(--input);color:var(--t1);outline:none;font-size:14px;resize:none;max-height:120px;min-height:44px;line-height:1.5;transition:.2s}
+.message-input textarea:focus{border-color:rgba(61,219,196,.55);box-shadow:0 0 0 3px rgba(61,219,196,.12)}
+.send-btn{background:linear-gradient(145deg,#62f7df,#0eb9a2);border:none;width:44px;height:44px;border-radius:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:19px;color:#04302a;transition:.22s}
+.send-btn:hover{transform:translateY(-2px) scale(1.06);border-radius:50%}
+.attach-popup{position:absolute;bottom:58px;right:0;background:var(--panel-solid);border:1px solid var(--border-strong);border-radius:19px;padding:8px;box-shadow:var(--shadow);display:none;flex-direction:column;gap:4px;min-width:210px;z-index:30;animation:popIn .22s ease}
+.attach-popup.active{display:flex}
+.attach-popup-item{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:14px;cursor:pointer;font-size:13.5px;color:var(--t1);border:none;background:transparent;width:100%;text-align:right;font-weight:700;transition:.18s}
+.attach-popup-item:hover{background:var(--hover);transform:translateX(-3px)}
+.attach-popup-item .ico{width:39px;height:39px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:19px;background:var(--input)}
+.modal-overlay{position:fixed;inset:0;background:rgba(2,6,10,.72);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:100;padding:20px}
+.modal-overlay.active{display:flex}
+.modal{background:var(--panel-solid);border-radius:26px;padding:28px;max-width:470px;width:100%;max-height:90vh;overflow-y:auto;border:1px solid var(--border-strong);box-shadow:var(--shadow);animation:modalIn .3s cubic-bezier(.34,1.3,.64,1)}
+.modal.large{max-width:1080px}
+@keyframes modalIn{from{opacity:0;transform:translateY(24px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
+.modal-head{display:flex;align-items:center;gap:12px;margin-bottom:22px}
+.modal-head-icon{width:46px;height:46px;border-radius:15px;background:var(--input);display:flex;align-items:center;justify-content:center;font-size:23px}
+.modal-head h3{font-size:17px;font-weight:800;flex:1}
+.modal-field{margin-bottom:16px}
+.modal-field label{display:block;margin-bottom:7px;font-size:12.5px;color:var(--t2);font-weight:700}
+.modal-field input,.modal-field textarea,.modal-field select{width:100%;padding:12px 16px;border-radius:14px;border:1.5px solid var(--border);background:var(--input);color:var(--t1);outline:none;font-size:14px;transition:.2s}
+.modal-field input:focus,.modal-field textarea:focus{border-color:rgba(61,219,196,.55);box-shadow:0 0 0 3px rgba(61,219,196,.12)}
+.modal-field textarea{min-height:84px;resize:vertical}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:24px;flex-wrap:wrap}
+.btn{padding:12px 24px;border:none;border-radius:14px;cursor:pointer;font-size:14px;font-weight:800;display:inline-flex;align-items:center;gap:8px;justify-content:center;transition:.22s}
+.btn-primary{background:linear-gradient(145deg,#62f7df,#0eb9a2);color:#04302a}
+.btn-primary:hover{transform:translateY(-2px)}
+.btn-secondary{background:var(--input);color:var(--t1);border:1px solid var(--border)}
+.btn-secondary:hover{background:var(--hover)}
+.btn-danger{background:linear-gradient(145deg,#ff8a9b,#e11d48);color:#fff}
+.btn-danger:hover{transform:translateY(-2px)}
+.btn-vip{background:linear-gradient(145deg,#FFD700,#FFA500);color:#4a2c00}
+.btn-vip:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(255,215,0,.4)}
+.btn-spc{background:linear-gradient(145deg,#10B981,#059669);color:#fff}
+.btn-spc:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(16,185,129,.4)}
+.btn-block{width:100%}
+.small-note{font-size:11px;color:var(--t2);margin-top:6px;line-height:1.7}
+.users-list{max-height:235px;overflow-y:auto;border:1.5px solid var(--border);border-radius:15px;padding:6px;background:var(--input);display:flex;flex-direction:column;gap:3px}
+.user-option{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:12px;cursor:pointer;border:1.5px solid transparent;transition:.18s}
+.user-option:hover{background:var(--hover)}
+.user-option input{width:auto;margin:0;accent-color:var(--accent)}
+.user-option-avatar{width:37px;height:37px;border-radius:12px;background:linear-gradient(145deg,#62f7df,#0eb9a2);color:#04302a;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;overflow:hidden}
+.user-option-avatar img{width:100%;height:100%;object-fit:cover}
+.user-option-info{flex:1;min-width:0}
+.user-option-name{font-size:13.5px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:5px}
+.user-option-username{font-size:11.5px;color:var(--t2);direction:ltr;text-align:right}
+.selected-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.member-chip{display:inline-flex;align-items:center;gap:6px;background:rgba(61,219,196,.14);border:1px solid rgba(61,219,196,.3);color:var(--accent);padding:5px 11px;border-radius:20px;font-size:12px;font-weight:800;animation:popIn .2s ease}
+.member-chip button{background:none;border:none;color:inherit;cursor:pointer;padding:0;opacity:.8}
+.menu-rows{display:flex;flex-direction:column;gap:7px}
+.menu-row{display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:16px;background:var(--input);border:1px solid var(--border);cursor:pointer;font-size:13.5px;font-weight:800;color:var(--t1);width:100%;text-align:right;transition:.2s}
+.menu-row:hover{background:var(--hover);transform:translateX(-3px)}
+.menu-row.danger{color:var(--danger)}
+.avatar-upload-box{display:flex;flex-direction:column;align-items:center;gap:8px;margin-bottom:18px}
+.avatar-big{width:90px;height:90px;border-radius:28px;background:linear-gradient(145deg,#62f7df,#0eb9a2);color:#04302a;display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:800;overflow:hidden;cursor:pointer;position:relative;transition:.25s}
+.avatar-big:hover{transform:scale(1.05) rotate(-2deg)}
+.avatar-big img{width:100%;height:100%;object-fit:cover}
+.avatar-big.premium-glow{box-shadow:0 0 20px rgba(255,215,0,.5);border:2px solid rgba(255,215,0,.4)}
+.avatar-upload-overlay{position:absolute;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;opacity:0;transition:.2s;color:#fff;pointer-events:none;font-size:27px}
+.avatar-big:hover .avatar-upload-overlay,.profile-avatar:hover .avatar-upload-overlay{opacity:1}
+.avatar-actions{display:flex;gap:6px;margin-top:8px}
+.section-title{font-size:14px;font-weight:800;margin:22px 0 12px;display:flex;align-items:center;gap:9px}
+.section-title::after{content:'';flex:1;height:1px;background:var(--border)}
+.section-title.vip{color:var(--vip-gold)}
+.section-title.vip::after{background:linear-gradient(to left,transparent,rgba(255,215,0,.3))}
+.section-title.spc{color:var(--spc-green)}
+.section-title.spc::after{background:linear-gradient(to left,transparent,rgba(16,185,129,.3))}
+.profile-header{display:flex;align-items:center;gap:14px;margin-bottom:18px;padding:16px;background:linear-gradient(135deg,rgba(61,219,196,.1),transparent);border-radius:19px;border:1px solid var(--border)}
+.profile-header.premium{background:linear-gradient(135deg,rgba(255,215,0,.12),rgba(255,165,0,.05));border-color:rgba(255,215,0,.3)}
+.profile-avatar{width:68px;height:68px;border-radius:23px;background:linear-gradient(145deg,#62f7df,#0eb9a2);color:#04302a;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:800;overflow:hidden;flex-shrink:0;position:relative;cursor:pointer;transition:.2s}
+.profile-avatar:hover{transform:scale(1.05)}
+.profile-avatar img{width:100%;height:100%;object-fit:cover}
+.profile-avatar.premium-glow{box-shadow:0 0 22px rgba(255,215,0,.5);border:2px solid rgba(255,215,0,.4)}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:var(--input);border-radius:15px;border:1px solid var(--border);margin-bottom:10px;gap:12px}
+.toggle-row-label{font-size:13px;font-weight:800}
+.toggle-switch{position:relative;width:48px;height:27px;flex-shrink:0}
+.toggle-switch input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;cursor:pointer;inset:0;background:var(--border-strong);border-radius:27px;transition:.3s}
+.toggle-slider::before{position:absolute;content:"";height:21px;width:21px;right:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s}
+.toggle-switch input:checked+.toggle-slider{background:linear-gradient(145deg,#62f7df,#0eb9a2)}
+.toggle-switch input:checked+.toggle-slider::before{transform:translateX(-21px)}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:11px;margin-bottom:24px}
+.stat-card{background:var(--input);border-radius:18px;padding:17px 14px;text-align:center;border:1px solid var(--border);transition:.25s}
+.stat-card:hover{transform:translateY(-4px);border-color:rgba(61,219,196,.42)}
+.stat-card.vip{background:linear-gradient(135deg,rgba(255,215,0,.15),rgba(255,165,0,.05));border-color:rgba(255,215,0,.4)}
+.stat-card.spc{background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(5,150,105,.05));border-color:rgba(16,185,129,.4)}
+.stat-ico{font-size:22px;margin-bottom:6px;display:inline-block}
+.stat-value{font-size:23px;font-weight:800;margin-bottom:3px;color:var(--accent)}
+.stat-card.vip .stat-value{color:var(--vip-gold)}
+.stat-card.spc .stat-value{color:var(--spc-green)}
+.stat-label{font-size:11.5px;color:var(--t2);font-weight:700}
+.table-wrapper{overflow:auto;border:1px solid var(--border);border-radius:17px;max-height:430px;background:var(--input)}
+.users-table{width:100%;border-collapse:collapse;font-size:13px;min-width:900px}
+.users-table th,.users-table td{padding:13px 12px;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap}
+.users-table th{position:sticky;top:0;background:var(--panel-solid);z-index:2;font-weight:800;color:var(--t2);font-size:11.5px}
+.users-table tr:hover td{background:var(--hover)}
+.badge{display:inline-flex;align-items:center;gap:5px;padding:4px 11px;border-radius:20px;font-size:11px;font-weight:800}
+.badge.success{background:rgba(61,219,196,.18);color:var(--accent)}
+.badge.danger{background:rgba(255,107,107,.16);color:var(--danger)}
+.badge.warning{background:rgba(255,217,61,.14);color:#e0a800}
+.badge.info{background:rgba(91,155,213,.15);color:#5b9bd5}
+.badge.muted{background:rgba(127,127,127,.16);color:var(--t2)}
+.badge.vip{background:linear-gradient(145deg,rgba(255,215,0,.2),rgba(255,165,0,.1));color:var(--vip-gold);border:1px solid rgba(255,215,0,.35)}
+.badge.spc{background:linear-gradient(145deg,rgba(16,185,129,.2),rgba(5,150,105,.1));color:var(--spc-green);border:1px solid rgba(16,185,129,.35)}
+.checkbox-row{display:flex;flex-wrap:wrap;gap:10px}
+.checkbox-item{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:700;padding:10px 15px;background:var(--input);border-radius:12px;border:1px solid var(--border);cursor:pointer;transition:.2s}
+.checkbox-item input{width:auto;margin:0;accent-color:var(--accent)}
+.action-buttons{display:flex;gap:6px;flex-wrap:wrap}
+.mini-btn{border:none;border-radius:10px;padding:7px 12px;cursor:pointer;font-size:12px;background:var(--hover);color:var(--t1);font-weight:800;transition:.18s;display:inline-flex;align-items:center;gap:5px}
+.mini-btn:hover{transform:translateY(-1px)}
+.mini-btn.danger{background:rgba(255,107,107,.13);color:var(--danger)}
+.mini-btn.vip{background:linear-gradient(145deg,rgba(255,215,0,.25),rgba(255,165,0,.15));color:var(--vip-gold);border:1px solid rgba(255,215,0,.35)}
+.mini-btn.spc{background:linear-gradient(145deg,rgba(16,185,129,.25),rgba(5,150,105,.15));color:var(--spc-green);border:1px solid rgba(16,185,129,.35)}
+.admin-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:13px;flex-wrap:wrap}
+.admin-toolbar input{padding:11px 15px;border-radius:13px;border:1.5px solid var(--border);background:var(--input);color:var(--t1);outline:none;min-width:210px}
+.admin-tabs{display:flex;gap:6px;margin-bottom:18px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.admin-tab{padding:10px 18px;background:transparent;border:none;color:var(--t2);font-weight:700;font-size:13px;cursor:pointer;border-bottom:2px solid transparent;transition:.2s;border-radius:10px 10px 0 0}
+.admin-tab:hover{color:var(--t1);background:var(--hover)}
+.admin-tab.active{color:var(--accent);border-bottom-color:var(--accent);background:rgba(61,219,196,.08)}
+.admin-panel{display:none}
+.admin-panel.active{display:block}
+.attachment-preview{background:var(--input);border-radius:17px;padding:14px;margin-bottom:12px;display:flex;align-items:center;justify-content:center;min-height:96px;border:1px solid var(--border);overflow:hidden}
+.attachment-preview img,.attachment-preview video{max-width:100%;max-height:260px;border-radius:13px;display:block}
+.file-meta{font-size:12px;color:var(--t2);margin-top:6px;display:flex;align-items:center;justify-content:center;gap:7px}
+.member-list-item{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:12px;border-bottom:1px solid var(--border);transition:.18s}
+.member-list-item:hover{background:var(--hover)}
+.member-list-item:last-child{border-bottom:none}
+.member-avatar{width:36px;height:36px;border-radius:12px;background:linear-gradient(145deg,#62f7df,#0eb9a2);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;flex-shrink:0;overflow:hidden;color:#04302a}
+.member-avatar img{width:100%;height:100%;object-fit:cover}
+.member-info{flex:1;min-width:0}
+.member-name{font-size:13px;font-weight:700;display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.member-status{font-size:11px;color:var(--t2)}
+.member-badge{font-size:10px;padding:2px 8px;border-radius:10px;background:var(--hover);color:var(--t2)}
+.member-actions{display:flex;gap:5px}
+.toast{position:fixed;top:24px;left:50%;transform:translateX(-50%);background:var(--panel-solid);color:var(--t1);padding:14px 26px;border-radius:17px;box-shadow:var(--shadow);z-index:1000;display:none;border:1px solid var(--border-strong);font-weight:800;max-width:90%;text-align:center;font-size:13.5px}
+.toast.show{display:block;animation:toastIn .3s ease}
+@keyframes toastIn{from{transform:translate(-50%,-35px);opacity:0}to{transform:translate(-50%,0);opacity:1}}
+.back-btn{display:none}
+.online-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-left:4px;background:#4caf50}
+.verified-badge{display:inline-flex;align-items:center;vertical-align:middle;flex-shrink:0;cursor:pointer;transition:.2s}
+.verified-badge:hover{transform:scale(1.2)}
+.verified-badge img{width:20px;height:20px;display:block}
+.vip-badge{display:inline-flex;align-items:center;vertical-align:middle;flex-shrink:0;cursor:pointer;transition:.2s;filter:drop-shadow(0 0 4px rgba(255,215,0,.6))}
+.vip-badge:hover{transform:scale(1.2) rotate(-8deg)}
+.vip-badge img{width:22px;height:22px;display:block}
+.vip-badge.animated{animation:vipShine 3s ease-in-out infinite}
+@keyframes vipShine{0%,100%{filter:drop-shadow(0 0 4px rgba(255,215,0,.6))}50%{filter:drop-shadow(0 0 12px rgba(255,215,0,.9))}}
+.chat-card{background:var(--input);border:1px solid var(--border);border-radius:16px;padding:15px;margin-bottom:10px;transition:.2s}
+.chat-card:hover{border-color:rgba(61,219,196,.4);transform:translateY(-1px)}
+.chat-card-head{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.chat-card-avatar{width:48px;height:48px;border-radius:14px;background:linear-gradient(145deg,#62f7df,#0eb9a2);display:flex;align-items:center;justify-content:center;color:var(--on-accent);font-weight:800;font-size:18px;overflow:hidden;flex-shrink:0}
+.chat-card-avatar img{width:100%;height:100%;object-fit:cover}
+.chat-card-title{flex:1;min-width:0}
+.chat-card-title .name{font-weight:800;font-size:14px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.chat-card-title .meta{font-size:11px;color:var(--t2);margin-top:3px}
+.chat-card-stats{display:flex;gap:10px;font-size:11px;color:var(--t2);margin-bottom:10px;flex-wrap:wrap}
+.chat-card-stats span{display:inline-flex;align-items:center;gap:4px}
+.chat-card-actions{display:flex;gap:6px;flex-wrap:wrap}
+.premium-card{background:linear-gradient(135deg,rgba(255,215,0,.12),rgba(255,165,0,.04));border:1.5px solid rgba(255,215,0,.3);border-radius:18px;padding:18px;margin-bottom:16px;position:relative;overflow:hidden}
+.premium-card::before{content:'';position:absolute;top:-50%;right:-50%;width:200%;height:200%;background:radial-gradient(circle,rgba(255,215,0,.08) 0%,transparent 50%);animation:premiumRotate 20s linear infinite;pointer-events:none}
+@keyframes premiumRotate{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+.premium-card-content{position:relative;z-index:1}
+.premium-card-head{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.premium-card-head h4{font-size:15px;font-weight:800;color:var(--vip-gold);margin:0}
+.premium-info-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,215,0,.1)}
+.premium-info-row:last-child{border-bottom:none}
+.premium-info-label{font-size:12px;color:var(--t2)}
+.premium-info-value{font-size:13px;font-weight:700;color:var(--t1)}
+.wallet-card{background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(5,150,105,.04));border:1.5px solid rgba(16,185,129,.3);border-radius:18px;padding:18px;margin-bottom:16px;position:relative;overflow:hidden}
+.wallet-card::before{content:'';position:absolute;top:-50%;left:-50%;width:200%;height:200%;background:radial-gradient(circle,rgba(16,185,129,.08) 0%,transparent 50%);animation:walletRotate 25s linear infinite;pointer-events:none}
+@keyframes walletRotate{from{transform:rotate(0)}to{transform:rotate(-360deg)}}
+.wallet-card-content{position:relative;z-index:1}
+.wallet-card-head{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.wallet-card-head h4{font-size:15px;font-weight:800;color:var(--spc-green);margin:0}
+.wallet-balance{font-size:28px;font-weight:800;color:var(--spc-green);text-align:center;padding:12px 0;border-radius:12px;background:rgba(16,185,129,.1);margin-bottom:12px}
+.wallet-balance small{font-size:14px;color:var(--t2);font-weight:500}
+.wallet-toman{font-size:13px;color:var(--t2);text-align:center;margin-top:-8px;margin-bottom:12px}
+.color-picker{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.color-option{width:36px;height:36px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:.2s;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:800}
+.color-option:hover{transform:scale(1.1)}
+.color-option.selected{border-color:#fff;box-shadow:0 0 0 2px var(--accent)}
+.msg-color-picker{display:flex;gap:6px;padding:8px 12px;background:var(--input);border-radius:12px;margin-bottom:8px;border:1px solid var(--border);align-items:center;flex-wrap:wrap}
+.msg-color-picker label{font-size:11px;color:var(--t2);font-weight:700;margin-left:8px}
+.msg-color-option{width:28px;height:28px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:.2s}
+.msg-color-option:hover{transform:scale(1.15)}
+.msg-color-option.selected{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+.msg-color-option.none{background:var(--input);display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--t2)}
+.premium-feature-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.premium-feature{display:flex;align-items:center;gap:10px;padding:10px 12px;background:rgba(255,215,0,.06);border-radius:10px;border:1px solid rgba(255,215,0,.15);font-size:12.5px}
+.premium-feature-icon{font-size:18px}
+.premium-feature-text{flex:1}
+.premium-feature-text strong{display:block;font-size:13px;margin-bottom:2px}
+.premium-feature-text span{font-size:11px;color:var(--t2)}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-thumb{background:rgba(61,219,196,.35);border-radius:3px}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes fadeSlide{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+@keyframes popIn{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}}
+@keyframes messageSlideIn{from{opacity:0;transform:translateY(20px) scale(.95)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes reactionPop{0%{transform:scale(.5);opacity:0}50%{transform:scale(1.2)}100%{transform:scale(1);opacity:1}}
+.message-reactions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.reaction-chip{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:15px;background:rgba(255,255,255,.08);border:1px solid var(--border);font-size:12px;cursor:pointer;transition:.2s;animation:reactionPop .3s ease-out}
+.reaction-chip:hover{background:rgba(255,255,255,.15);transform:translateY(-2px)}
+.reaction-chip.active{background:rgba(61,219,196,.18);border-color:var(--accent);color:var(--accent)}
+.reaction-picker{position:absolute;bottom:100%;left:0;background:var(--panel-solid);border:1px solid var(--border-strong);border-radius:24px;padding:8px;display:none;gap:4px;box-shadow:var(--shadow);z-index:40;animation:popIn .2s ease}
+.reaction-picker.active{display:flex}
+.reaction-picker button{width:40px;height:40px;border:none;background:transparent;font-size:22px;border-radius:50%;cursor:pointer;transition:.2s}
+.reaction-picker button:hover{background:var(--hover);transform:scale(1.2)}
+.loading-spinner{display:inline-block;width:20px;height:20px;border:3px solid rgba(255,255,255,.3);border-radius:50%;border-top-color:var(--accent);animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.bio-counter{font-size:10.5px;color:var(--t2);margin-top:4px;text-align:left;direction:ltr}
+.bio-counter.warn{color:#e0a800}
+.bio-counter.danger{color:var(--danger)}
+.wallet-actions{display:flex;gap:8px;margin-top:12px}
+.wallet-actions .btn{flex:1}
+.transfer-history{max-height:150px;overflow-y:auto;margin-top:12px;padding:8px;background:var(--input);border-radius:12px;border:1px solid var(--border)}
+@media (max-width:768px){
+.app{padding:0;gap:0}
+.sidebar{width:100%;position:absolute;inset:0;z-index:10;border-radius:0;border:none}
+.chat-area{position:absolute;inset:0;z-index:9;transform:translateX(-100%);transition:transform .35s cubic-bezier(.22,.9,.3,1);border-radius:0;border:none}
+.app.show-chat .chat-area{transform:translateX(0);z-index:11}
+.back-btn{display:flex !important}
+.message{max-width:88%}
+.modal{max-width:calc(100vw - 26px);padding:20px}
+.modal.large{max-width:calc(100vw - 16px)}
+.fab-container{bottom:16px;left:14px}
+.users-table{min-width:700px}
 }
 </style>
 </head>
 <body data-theme="dark">
+<div class="bg-scene"><div class="blob blob-1"></div><div class="blob blob-2"></div></div>
 <div class="app" id="app">
-    <div class="sidebar">
-        <div class="sidebar-header">
-            <h2>
-                <img src="<?= htmlspecialchars($LOGO_URL) ?>" alt="اسپاتیرا" class="brand-logo-mini">
-                <span>پیام‌ها</span>
-                <span class="notif-badge" id="totalNotifBadge" style="display:none">0</span>
-            </h2>
-            <div class="sidebar-actions">
-                <button class="icon-btn" onclick="toggleNotifications()" id="notifBtn" title="اعلان‌ها">🔔</button>
-                <?php if (!empty($user['is_admin'])): ?>
-                <button class="icon-btn" onclick="openAdminPanel()" title="پنل مدیریت">
-                    🛠️
-                </button>
-                <?php endif; ?>
-                <button class="icon-btn" onclick="openProfileModal()" title="تنظیمات">⚙️</button>
-                <button class="icon-btn" onclick="toggleTheme()" id="themeBtn" title="تم">🌙</button>
-                <button class="icon-btn" onclick="logout()" title="خروج">🚪</button>
-            </div>
-        </div>
-
-        <div class="user-info" onclick="openProfileModal()">
-            <div class="user-avatar">
-                <?php if (!empty($user['avatar'])): ?>
-                <img src="<?= htmlspecialchars($user['avatar']) ?>" alt="<?= htmlspecialchars($user['username']) ?>">
-                <?php else: ?>
-                <?= mb_substr($user['name'] ?: $user['username'], 0, 1) ?>
-                <?php endif; ?>
-            </div>
-            <div class="user-details">
-                <div class="user-name"><?= htmlspecialchars($user['name'] ?? $user['username']) ?></div>
-                <div class="user-status">@<?= htmlspecialchars($user['username']) ?></div>
-            </div>
-        </div>
-
-        <div class="search-box">
-            <input type="text" id="searchChats" placeholder="جستجو..." oninput="filterChats()">
-        </div>
-
-        <div class="chat-list" id="chatList"></div>
-
-        <div class="fab-container" id="fabContainer">
-            <div class="fab-menu">
-                <div class="fab-menu-item" onclick="createChat('private')">
-                    <div class="fab-menu-item-icon private">💬</div>
-                    <span>پیام خصوصی</span>
-                </div>
-                <div class="fab-menu-item" onclick="createChat('group')">
-                    <div class="fab-menu-item-icon group">👥</div>
-                    <span>گروه</span>
-                </div>
-                <div class="fab-menu-item" onclick="createChat('channel')">
-                    <div class="fab-menu-item-icon channel">📢</div>
-                    <span>کانال</span>
-                </div>
-            </div>
-
-            <button class="fab-btn" onclick="toggleFab()" id="fabBtn" title="چت جدید">
-                <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.996.996 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-            </button>
-        </div>
-    </div>
-
-    <div class="chat-area" id="chatArea">
-        <div class="empty-state" id="emptyState">
-            <div class="emoji">
-                <img src="<?= htmlspecialchars($LOGO_URL) ?>" alt="اسپاتیرا">
-            </div>
-            <div style="font-weight:600;font-size:17px">به اسپاتیرا خوش آمدید</div>
-            <div>یک چت را انتخاب کنید تا گفت‌وگو آغاز شود</div>
-        </div>
-
-        <div id="chatContainer" style="display:none;flex:1;flex-direction:column;min-height:0">
-            <div class="chat-header">
-                <button class="icon-btn back-btn" onclick="closeChat()">←</button>
-                <div class="chat-avatar" id="chatAvatar"></div>
-                <div class="chat-header-info">
-                    <div class="chat-header-name" id="chatName"></div>
-                    <div class="chat-header-status" id="chatStatus"></div>
-                </div>
-                <div class="sidebar-actions">
-                    <button class="icon-btn" onclick="openChatMenu()" title="منو">⋮</button>
-                </div>
-            </div>
-
-            <div class="messages" id="messages"></div>
-
-            <div class="message-input-wrap">
-                <div class="message-input" id="msgInputRow">
-                    <div style="position:relative">
-                        <button class="attach-btn" onclick="toggleAttach()" title="پیوست" id="attachBtn" type="button">📎</button>
-                        <div class="attach-popup" id="attachPopup">
-                            <button class="attach-popup-item" onclick="pickAttach('image')">
-                                <span class="ico img">🖼️</span>
-                                <span>تصویر</span>
-                            </button>
-                            <button class="attach-popup-item" onclick="pickAttach('video')">
-                                <span class="ico vid">🎬</span>
-                                <span>ویدیو</span>
-                            </button>
-                            <button class="attach-popup-item" onclick="pickAttach('file')">
-                                <span class="ico file">📄</span>
-                                <span>فایل</span>
-                            </button>
-                        </div>
-                    </div>
-
-                    <input type="file" id="fileInput" style="display:none">
-                    <input type="file" id="imageInput" style="display:none" accept="image/*">
-                    <input type="file" id="videoInput" style="display:none" accept="video/*">
-
-                    <textarea id="messageInput" placeholder="پیام خود را بنویسید..." rows="1"></textarea>
-
-                    <div class="recording-ui" id="recordingUI">
-                        <div class="rec-dot"></div>
-                        <div class="rec-waves">
-                            <div class="wbar"></div><div class="wbar"></div><div class="wbar"></div>
-                            <div class="wbar"></div><div class="wbar"></div><div class="wbar"></div><div class="wbar"></div>
-                        </div>
-                        <div class="rec-time" id="recTime">0:00</div>
-                        <button class="rec-cancel" onclick="cancelRecording()" type="button">لغو</button>
-                    </div>
-
-                    <button class="voice-btn" onclick="toggleRecording()" title="ضبط صدا" id="voiceBtn" type="button">🎤</button>
-                    <button class="send-btn" onclick="sendMessage()" id="sendBtn" type="button" aria-label="ارسال">➤</button>
-                </div>
-            </div>
-        </div>
-    </div>
+<div class="sidebar">
+<div class="sidebar-header">
+<div class="brand">
+<img src="<?= htmlspecialchars($LOGO_URL) ?>" alt="لوگو" class="brand-logo">
+<div class="brand-title">
+<span>پیام‌ها <span id="totalNotifBadge" class="unread-badge" style="display:none">0</span></span>
+<small>پیام‌رسان</small>
 </div>
-
-<!-- New Chat Modal -->
+</div>
+<div class="header-actions">
+<?php if (!empty($user['is_admin'])): ?>
+<button class="icon-btn" onclick="openAdminPanel()" title="پنل مدیریت">🛡️</button>
+<?php endif; ?>
+<button class="icon-btn" onclick="openProfileModal()" title="تنظیمات">⚙️</button>
+<button class="icon-btn" onclick="toggleTheme()" id="themeBtn" title="تم">🌙</button>
+<button class="icon-btn" onclick="logout()" title="خروج">🚪</button>
+</div>
+</div>
+<div class="me-card <?= !empty($safe_user['premium']) ? 'premium' : '' ?>" onclick="openProfileModal()">
+<div class="avatar <?= !empty($safe_user['premium']) ? 'premium-glow' : '' ?>" id="meAvatar">
+<?php if ($ME_AVATAR_URL !== ''): ?>
+<img src="<?= htmlspecialchars($ME_AVATAR_URL) ?>" alt="">
+<?php else: ?>
+<?= htmlspecialchars(mb_substr($user['name'] ?: $user['username'], 0, 1)) ?>
+<?php endif; ?>
+</div>
+<div class="me-info">
+<div class="me-name"><?= htmlspecialchars($user['name'] ?? $user['username']) ?></div>
+<div class="me-username">@<?= htmlspecialchars($user['username']) ?></div>
+</div>
+<span class="icon-btn" style="pointer-events:none">›</span>
+</div>
+<div class="search-box">
+<input type="text" id="searchChats" placeholder="جستجو در گفتگوها..." oninput="filterChats()">
+</div>
+<div class="chat-list" id="chatList"></div>
+<div class="fab-container" id="fabContainer">
+<div class="fab-menu" id="fabMenu">
+<div class="fab-menu-item" onclick="createChat('channel')"><div class="fab-mi-icon">📣</div><div class="fab-mi-text"><b>کانال جدید</b><span>انتشار محتوا</span></div></div>
+<div class="fab-menu-item" onclick="createChat('group')"><div class="fab-mi-icon">👥</div><div class="fab-mi-text"><b>گروه جدید</b><span>گفتگوی چند نفره</span></div></div>
+<div class="fab-menu-item" onclick="createChat('private')"><div class="fab-mi-icon">💬</div><div class="fab-mi-text"><b>پیام خصوصی</b><span>شروع گفتگوی دونفره</span></div></div>
+</div>
+<button class="fab-btn" onclick="toggleFab()" id="fabBtn">➕</button>
+</div>
+</div>
+<div class="chat-area" id="chatArea">
+<div class="empty-state" id="emptyState">
+<div class="empty-logo"><img src="<?= htmlspecialchars($LOGO_URL) ?>" alt="لوگو"></div>
+<h3>به پیام‌رسان خوش آمدید</h3>
+<div>یک گفتگو را انتخاب کنید یا یکی جدید بسازید</div>
+<div class="empty-chips">
+<span class="empty-chip" onclick="openSavedChat()">🔖 پیام‌های ذخیره‌شده</span>
+<span class="empty-chip" onclick="createChat('channel')">📣 ساخت کانال</span>
+<span class="empty-chip" onclick="createChat('group')">👥 ایجاد گروه</span>
+</div>
+</div>
+<div id="chatContainer" style="display:none;flex:1;flex-direction:column;min-height:0">
+<div class="chat-header">
+<button class="icon-btn back-btn" onclick="closeChat()">⬅️</button>
+<div class="chat-avatar" id="chatAvatar"></div>
+<div class="chat-header-info" id="chatHeaderInfo">
+<div class="chat-header-name" id="chatName"></div>
+<div class="chat-header-status" id="chatStatus"></div>
+</div>
+<div class="header-actions">
+<button class="icon-btn" onclick="toggleChatSearch()" title="جستجو">🔍</button>
+<button class="icon-btn" onclick="openChatMenu()" title="منو">⋮</button>
+<button class="icon-btn" onclick="openMembersModal()" title="اعضا" id="membersBtn" style="display:none">👥</button>
+</div>
+</div>
+<div id="chatSearchBar" style="display:none;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--input)">
+<div style="display:flex;align-items:center;gap:8px">
+<input type="text" id="chatSearchInput" placeholder="جستجو در پیام‌ها..." oninput="filterChatMessages()" style="flex:1;padding:8px 12px;border-radius:10px;border:1px solid var(--border);background:var(--panel-solid);color:var(--t1);outline:none;font-size:13px">
+<button class="icon-btn" onclick="toggleChatSearch()" style="width:32px;height:32px;font-size:14px">✖️</button>
+</div>
+</div>
+<div id="pinnedMessage" style="display:none;padding:8px 16px;background:var(--input);border-bottom:1px solid var(--border);cursor:pointer" onclick="scrollToMessage(this.dataset.msgId)"></div>
+<div class="messages" id="messages"></div>
+<div class="message-input-wrap" id="messageInputWrap">
+<div id="replyPreview" style="display:none;padding:0 16px 8px"></div>
+<div id="msgColorPicker" style="display:none"></div>
+<div class="message-input">
+<div style="position:relative">
+<button class="round-btn" onclick="toggleAttach()" title="پیوست" type="button">📎</button>
+<div class="attach-popup" id="attachPop">
+<button class="attach-popup-item" onclick="pickAttach('image')"><span class="ico">🖼️</span><span>تصویر</span></button>
+<button class="attach-popup-item" onclick="pickAttach('video')"><span class="ico">🎬</span><span>ویدیو</span></button>
+<button class="attach-popup-item" onclick="pickAttach('file')"><span class="ico">📄</span><span>فایل</span></button>
+</div>
+</div>
+<input type="file" id="fileInput" style="display:none">
+<input type="file" id="imageInput" style="display:none" accept="image/*">
+<input type="file" id="videoInput" style="display:none" accept="video/*">
+<textarea id="messageInput" placeholder="پیام خود را بنویسید..." rows="1"></textarea>
+<button class="send-btn" onclick="sendMessage()" type="button">➤</button>
+</div>
+</div>
+</div>
+</div>
+</div>
 <div class="modal-overlay" id="newChatModal">
-    <div class="modal">
-        <h3 id="newChatTitle">ایجاد چت جدید</h3>
-
-        <div class="modal-field" id="chatNameField" style="display:none">
-            <label>نام</label>
-            <input type="text" id="newChatName" placeholder="مثلاً: دوستان">
-        </div>
-
-        <div class="modal-field" id="chatDescField" style="display:none">
-            <label>توضیحات (اختیاری)</label>
-            <textarea id="newChatDesc"></textarea>
-        </div>
-
-        <div class="modal-field" id="membersField">
-            <label id="membersLabel">انتخاب کاربر</label>
-            <input type="text" id="userSearch" placeholder="جستجوی آیدی یا نام..." oninput="searchUsers()">
-            <div class="small-note" style="margin-top:4px;margin-bottom:6px">فقط کاربرانی که «قابل جستجو» بودنشان فعال است نمایش داده می‌شوند.</div>
-            <div class="users-list" id="usersList"></div>
-        </div>
-
-        <div class="modal-actions">
-            <button class="btn btn-secondary" onclick="closeModal('newChatModal')">انصراف</button>
-            <button class="btn btn-primary" onclick="submitCreateChat()">ایجاد</button>
-        </div>
-    </div>
+<div class="modal">
+<div class="modal-head">
+<div class="modal-head-icon">💬</div>
+<h3 id="newChatTitle">ایجاد چت جدید</h3>
+<button class="icon-btn" onclick="closeModal('newChatModal')">✖️</button>
 </div>
-
-<!-- Chat Menu Modal -->
+<div class="modal-field" id="chatNameField" style="display:none">
+<label>نام</label>
+<input type="text" id="newChatName" placeholder="مثلاً: دوستان صمیمی">
+</div>
+<div class="modal-field" id="chatDescField" style="display:none">
+<label>توضیحات (اختیاری)</label>
+<textarea id="newChatDesc" placeholder="توضیحی کوتاه..."></textarea>
+</div>
+<div class="modal-field">
+<label>انتخاب کاربر</label>
+<input type="text" id="userSearch" placeholder="جستجوی آیدی یا نام کاربر..." oninput="searchUsers()">
+<div class="small-note">فقط کاربرانی که «قابل جستجو» باشند نمایش داده می‌شوند.</div>
+<div class="selected-chips" id="selectedChips"></div>
+<div class="users-list" id="usersList" style="margin-top:8px"></div>
+</div>
+<div class="modal-actions">
+<button class="btn btn-secondary" onclick="closeModal('newChatModal')">انصراف</button>
+<button class="btn btn-primary" onclick="submitCreateChat()">➕ ایجاد</button>
+</div>
+</div>
+</div>
 <div class="modal-overlay" id="chatMenuModal">
-    <div class="modal">
-        <h3 id="menuTitle">تنظیمات چت</h3>
-        <div id="chatMenuContent"></div>
-        <div class="modal-actions">
-            <button class="btn btn-secondary" onclick="closeModal('chatMenuModal')">بستن</button>
-        </div>
-    </div>
+<div class="modal">
+<div class="modal-head">
+<div class="modal-head-icon">⚙️</div>
+<h3 id="menuTitle">تنظیمات چت</h3>
+<button class="icon-btn" onclick="closeModal('chatMenuModal')">✖️</button>
 </div>
-
-<!-- Edit Chat Modal -->
+<div id="chatMenuContent"></div>
+</div>
+</div>
 <div class="modal-overlay" id="editChatModal">
-    <div class="modal">
-        <h3>ویرایش چت</h3>
-
-        <div class="chat-avatar-upload" id="editChatAvatar" onclick="document.getElementById('chatAvatarInput').click()">
-            <span id="editChatAvatarText"></span>
-            <div class="avatar-upload-overlay">📷</div>
-        </div>
-        <div class="avatar-actions">
-            <button class="mini-btn" type="button" onclick="removeChatAvatar()">حذف عکس</button>
-        </div>
-        <input type="file" id="chatAvatarInput" style="display:none" accept="image/*" onchange="uploadChatAvatar(this)">
-
-        <div class="modal-field" style="margin-top:14px">
-            <label>نام</label>
-            <input type="text" id="editChatName">
-        </div>
-        <div class="modal-field">
-            <label>توضیحات</label>
-            <textarea id="editChatDesc"></textarea>
-        </div>
-        <div class="modal-field">
-            <label>آیدی عمومی (public_id)</label>
-            <input type="text" id="editPublicId" placeholder="مثلاً: my_channel">
-            <div class="small-note">فقط حروف انگلیسی، اعداد و آندرلاین.</div>
-        </div>
-        <div class="modal-actions">
-            <button class="btn btn-secondary" onclick="closeModal('editChatModal')">انصراف</button>
-            <button class="btn btn-primary" onclick="saveChatEdit()">ذخیره</button>
-        </div>
-    </div>
+<div class="modal">
+<div class="modal-head">
+<div class="modal-head-icon">✏️</div>
+<h3>ویرایش چت</h3>
+<button class="icon-btn" onclick="closeModal('editChatModal')">✖️</button>
 </div>
-
-<!-- Profile Modal -->
+<div class="avatar-upload-box">
+<div class="avatar-big" id="editChatAvatar" onclick="document.getElementById('chatAvatarInput').click()"></div>
+<div class="avatar-actions">
+<button class="mini-btn danger" type="button" onclick="removeChatAvatar()">🗑️ حذف عکس</button>
+</div>
+</div>
+<input type="file" id="chatAvatarInput" style="display:none" accept="image/*" onchange="uploadChatAvatar(this)">
+<div class="modal-field"><label>نام چت</label><input type="text" id="editChatName"></div>
+<div class="modal-field"><label>توضیحات</label><textarea id="editChatDesc"></textarea></div>
+<div class="modal-actions">
+<button class="btn btn-secondary" onclick="closeModal('editChatModal')">انصراف</button>
+<button class="btn btn-primary" onclick="saveChatEdit()">💾 ذخیره تغییرات</button>
+</div>
+</div>
+</div>
+<div class="modal-overlay" id="chatProfileModal">
+<div class="modal">
+<div class="modal-head">
+<div class="modal-head-icon" id="chatProfileIcon">👥</div>
+<h3 id="chatProfileTitle">پروفایل چت</h3>
+<button class="icon-btn" onclick="closeModal('chatProfileModal')">✖️</button>
+</div>
+<div class="profile-header">
+<div class="profile-avatar" id="chatProfileAvatar" style="cursor:default"></div>
+<div style="flex:1;min-width:0">
+<div style="font-weight:800;font-size:16px;display:flex;align-items:center;gap:6px" id="chatProfileName"></div>
+<div style="font-size:12.5px;color:var(--t2);margin-top:4px" id="chatProfileType"></div>
+</div>
+</div>
+<div class="modal-field"><label>توضیحات</label><div id="chatProfileDesc" style="font-size:13px;color:var(--t2);line-height:1.8;background:var(--input);padding:12px;border-radius:12px"></div></div>
+<div class="modal-field"><label>مالک</label><div id="chatProfileOwner" style="font-size:13px;color:var(--t1);line-height:1.8"></div></div>
+<div class="modal-field"><label>آمار</label><div id="chatProfileStats" style="font-size:13px;color:var(--t2);line-height:1.8"></div></div>
+<div class="modal-actions">
+<button class="btn btn-secondary" onclick="closeModal('chatProfileModal')">بستن</button>
+<button class="btn btn-primary" onclick="openMembersModalFromProfile()">👥 مشاهده اعضا</button>
+</div>
+</div>
+</div>
+<div class="modal-overlay" id="forwardModal">
+<div class="modal">
+<div class="modal-head">
+<div class="modal-head-icon">↪️</div>
+<h3>فوروارد پیام به...</h3>
+<button class="icon-btn" onclick="closeModal('forwardModal')">✖️</button>
+</div>
+<div class="modal-field">
+<input type="text" id="forwardSearch" placeholder="جستجوی چت..." oninput="renderForwardChats()">
+<div class="users-list" id="forwardChatsList" style="margin-top:8px;max-height:300px"></div>
+</div>
+</div>
+</div>
 <div class="modal-overlay" id="profileModal">
-    <div class="modal">
-        <h3>تنظیمات کاربری</h3>
-        <div class="profile-header">
-            <div class="profile-avatar" id="profileAvatar" onclick="document.getElementById('userAvatarInput').click()">
-                <span id="profileAvatarText"></span>
-                <div class="avatar-upload-overlay">📷</div>
-            </div>
-            <div style="flex:1;min-width:0">
-                <div style="font-weight:700;font-size:15px" id="profileDisplayName"></div>
-                <div style="font-size:12px;color:var(--text-secondary)" id="profileDisplayUsername"></div>
-                <div class="avatar-actions" style="justify-content:flex-start;margin-top:6px">
-                    <button class="mini-btn" type="button" onclick="removeUserAvatar()">حذف عکس</button>
-                </div>
-            </div>
-        </div>
-        <input type="file" id="userAvatarInput" style="display:none" accept="image/*" onchange="uploadUserAvatar(this)">
-
-        <div class="section-title">اطلاعات حساب</div>
-        <div class="modal-field">
-            <label>آیدی</label>
-            <input type="text" id="profileUsername" placeholder="آیدی شما (مثلاً: ali_123)">
-            <div class="small-note">این آیدی برای یافتن شما توسط دیگران استفاده می‌شود.</div>
-        </div>
-        <div class="modal-field">
-            <label>نام نمایشی</label>
-            <input type="text" id="profileName" placeholder="نام نمایشی">
-        </div>
-        <div class="modal-field">
-            <label>بیو</label>
-            <textarea id="profileBio" placeholder="بیو..."></textarea>
-        </div>
-        <div class="modal-actions">
-            <button class="btn btn-primary" onclick="saveProfile()">ذخیره پروفایل</button>
-        </div>
-
-        <div class="section-title">اعلان‌ها</div>
-        <div class="toggle-row">
-            <div style="flex:1;min-width:0">
-                <div class="toggle-row-label">
-                    اعلان پیام جدید
-                    <span class="notif-status-pill" id="notifPermPill">غیرفعال</span>
-                </div>
-                <div class="toggle-row-sub">دریافت اعلان سیستم برای پیام‌های دریافتی</div>
-            </div>
-            <label class="toggle-switch">
-                <input type="checkbox" id="profileNotifEnabled" onchange="toggleNotifPref(this)">
-                <span class="toggle-slider"></span>
-            </label>
-        </div>
-        <button class="btn btn-secondary" onclick="requestNotifPermission()" style="width:100%;margin-top:4px" id="notifPermBtn">
-            🔔 درخواست مجوز اعلان از مرورگر
-        </button>
-
-        <div class="section-title">حریم خصوصی</div>
-        <div class="toggle-row">
-            <div style="flex:1;min-width:0">
-                <div class="toggle-row-label">قابل جستجو بودن</div>
-                <div class="toggle-row-sub">اگر غیرفعال باشد، دیگران نمی‌توانند شما را در جستجوی کاربر پیدا کنند</div>
-            </div>
-            <label class="toggle-switch">
-                <input type="checkbox" id="profileSearchable">
-                <span class="toggle-slider"></span>
-            </label>
-        </div>
-
-        <div class="section-title">تغییر رمز عبور</div>
-        <div class="modal-field">
-            <label>رمز عبور فعلی</label>
-            <input type="password" id="currentPassword">
-        </div>
-        <div class="modal-field">
-            <label>رمز عبور جدید</label>
-            <input type="password" id="newPassword">
-        </div>
-        <div class="modal-field">
-            <label>تکرار رمز عبور جدید</label>
-            <input type="password" id="confirmPassword">
-        </div>
-        <div class="modal-actions">
-            <button class="btn btn-success" onclick="changePassword()">تغییر رمز عبور</button>
-        </div>
-    </div>
+<div class="modal">
+<div class="modal-head">
+<div class="modal-head-icon">👤</div>
+<h3>تنظیمات حساب کاربری</h3>
+<button class="icon-btn" onclick="closeModal('profileModal')">✖️</button>
 </div>
-
-<!-- Admin Panel Modal -->
+<div id="premiumSection"></div>
+<div id="walletSection"></div>
+<div class="profile-header">
+<div class="profile-avatar" id="profileAvatar" onclick="document.getElementById('userAvatarInput').click()"></div>
+<div style="flex:1;min-width:0">
+<div style="font-weight:800;font-size:16px;display:flex;align-items:center;gap:6px" id="profileDisplayName"></div>
+<div style="font-size:12.5px;color:var(--accent);direction:ltr;text-align:right" id="profileDisplayUsername"></div>
+<div class="avatar-actions" style="justify-content:flex-start">
+<button class="mini-btn danger" type="button" onclick="removeUserAvatar()">🗑️ حذف عکس</button>
+</div>
+</div>
+</div>
+<input type="file" id="userAvatarInput" style="display:none" accept="image/*" onchange="uploadUserAvatar(this)">
+<div class="section-title">👤 اطلاعات حساب</div>
+<div class="modal-field"><label>@ آیدی</label><input type="text" id="profileUsername" style="direction:ltr;text-align:left"></div>
+<div class="modal-field"><label>نام نمایشی</label><input type="text" id="profileName"></div>
+<div class="modal-field">
+<label>بیو <span id="bioMaxLabel" style="font-weight:500;color:var(--t2)"></span></label>
+<textarea id="profileBio" oninput="updateBioCounter()"></textarea>
+<div class="bio-counter" id="bioCounter"></div>
+</div>
+<button class="btn btn-primary btn-block" onclick="saveProfile()">💾 ذخیره پروفایل</button>
+<div class="section-title">🔒 حریم خصوصی</div>
+<div class="toggle-row">
+<div style="flex:1">
+<div class="toggle-row-label">🔍 قابل جستجو بودن</div>
+<div class="small-note">اگر غیرفعال باشد، دیگران شما را در جستجو پیدا نمی‌کنند</div>
+</div>
+<label class="toggle-switch"><input type="checkbox" id="profileSearchable"><span class="toggle-slider"></span></label>
+</div>
+<div class="section-title">🔑 تغییر رمز عبور</div>
+<div class="modal-field"><label>رمز عبور فعلی</label><input type="password" id="currentPassword"></div>
+<div class="modal-field"><label>رمز عبور جدید</label><input type="password" id="newPassword"></div>
+<div class="modal-field"><label>تکرار رمز عبور جدید</label><input type="password" id="confirmPassword"></div>
+<button class="btn btn-primary btn-block" onclick="changePassword()">🔑 تغییر رمز عبور</button>
+</div>
+</div>
+<div class="modal-overlay" id="viewProfileModal">
+<div class="modal">
+<div class="modal-head">
+<div class="modal-head-icon">👤</div>
+<h3>پروفایل کاربر</h3>
+<button class="icon-btn" onclick="closeModal('viewProfileModal')">✖️</button>
+</div>
+<div id="viewProfilePremiumSection"></div>
+<div class="profile-header" id="viewProfileHeader">
+<div class="profile-avatar" id="viewProfileAvatar" style="cursor:default"></div>
+<div style="flex:1;min-width:0">
+<div style="font-weight:800;font-size:16px;display:flex;align-items:center;gap:6px" id="viewProfileName"></div>
+<div style="font-size:12.5px;color:var(--accent);direction:ltr;text-align:right" id="viewProfileUsername"></div>
+</div>
+</div>
+<div class="modal-field"><label>بیو</label><div id="viewProfileBio" style="font-size:13px;color:var(--t2);line-height:1.8"></div></div>
+<div class="modal-actions">
+<button class="btn btn-secondary" onclick="closeModal('viewProfileModal')">بستن</button>
+<button class="btn btn-primary" onclick="startPrivateWith(viewProfileTarget)">💬 پیام خصوصی</button>
+</div>
+</div>
+</div>
+<div class="modal-overlay" id="transferModal">
+<div class="modal">
+<div class="modal-head">
+<div class="modal-head-icon">💸</div>
+<h3>انتقال SPC</h3>
+<button class="icon-btn" onclick="closeModal('transferModal')">✖️</button>
+</div>
+<div id="transferWalletInfo" style="margin-bottom:16px"></div>
+<div class="modal-field">
+<label>نام کاربری مقصد</label>
+<input type="text" id="transferToUsername" placeholder="@username" style="direction:ltr;text-align:left">
+<div class="small-note">نام کاربری (آیدی) فردی که می‌خواهید SPC به او انتقال دهید</div>
+</div>
+<div class="modal-field">
+<label>مقدار SPC</label>
+<input type="number" id="transferAmount" min="1" max="1000000" placeholder="مثلاً: 100" style="direction:ltr;text-align:left">
+<div class="small-note">حداقل 1 و حداکثر 1,000,000 SPC در هر انتقال</div>
+</div>
+<div id="transferPreview" style="padding:12px;background:var(--input);border-radius:12px;border:1px solid var(--border);margin-bottom:16px;display:none">
+<div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="color:var(--t2);font-size:12px">مقدار انتقال:</span><strong id="transferPreviewAmount">0 SPC</strong></div>
+<div style="display:flex;justify-content:space-between"><span style="color:var(--t2);font-size:12px">معادل تومانی:</span><strong id="transferPreviewToman">0 تومان</strong></div>
+</div>
+<div class="modal-actions">
+<button class="btn btn-secondary" onclick="closeModal('transferModal')">انصراف</button>
+<button class="btn btn-spc" onclick="submitTransfer()">💸 انتقال SPC</button>
+</div>
+</div>
+</div>
 <div class="modal-overlay" id="adminModal">
-    <div class="modal large">
-        <h3>🛠️ پنل مدیریت</h3>
-        <div class="section-title">آمار کلی</div>
-        <div class="stats-grid" id="statsGrid"></div>
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;flex-wrap:wrap">
-            <div class="section-title" style="margin:0">مدیریت کاربران</div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap">
-                <input type="text" id="adminUserSearch" placeholder="جستجو..." style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary);outline:none;font-family:inherit" oninput="renderAdminUsers()">
-                <button class="btn btn-primary" onclick="openUserModal()">+ کاربر جدید</button>
-                <button class="btn btn-secondary" onclick="loadAdminData()">بروزرسانی</button>
-            </div>
-        </div>
-        <div class="table-wrapper">
-            <table class="users-table">
-                <thead>
-                    <tr>
-                        <th>آیدی</th>
-                        <th>نام</th>
-                        <th>نقش</th>
-                        <th>وضعیت</th>
-                        <th>جستجو</th>
-                        <th>تاریخ ثبت</th>
-                        <th>عملیات</th>
-                    </tr>
-                </thead>
-                <tbody id="adminUsersTable"></tbody>
-            </table>
-        </div>
-    </div>
+<div class="modal large">
+<div class="modal-head">
+<div class="modal-head-icon">🛡️</div>
+<h3>پنل مدیریت</h3>
+<button class="icon-btn" onclick="closeModal('adminModal')">✖️</button>
 </div>
-
-<!-- Admin User Modal -->
+<div class="admin-tabs">
+<button class="admin-tab active" onclick="switchAdminTab('users',this)">👥 کاربران</button>
+<button class="admin-tab" onclick="switchAdminTab('chats',this)">💬 گروه‌ها و کانال‌ها</button>
+<button class="admin-tab" onclick="switchAdminTab('wallet',this)">💰 کیف پول</button>
+<button class="admin-tab" onclick="switchAdminTab('bot',this)">🤖 ربات خوش‌آمدگویی</button>
+<button class="admin-tab" onclick="switchAdminTab('stats',this)">✨ آمار</button>
+</div>
+<div class="admin-panel active" id="adminPanel-users">
+<div class="admin-toolbar">
+<div class="section-title" style="margin:0;flex:none">👥 مدیریت کاربران</div>
+<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+<input type="text" id="adminUserSearch" placeholder="جستجوی کاربر..." oninput="renderAdminUsers()">
+<button class="btn btn-primary" onclick="openUserModal()">➕ کاربر جدید</button>
+<button class="btn btn-secondary" onclick="loadAdminData()">🔄 بروزرسانی</button>
+</div>
+</div>
+<div class="table-wrapper">
+<table class="users-table">
+<thead><tr><th>آیدی</th><th>نام</th><th>نقش</th><th>وضعیت</th><th>پرمیوم</th><th>کیف پول</th><th>جستجو</th><th>تاریخ ثبت</th><th>عملیات</th></tr></thead>
+<tbody id="adminUsersTable"></tbody>
+</table>
+</div>
+</div>
+<div class="admin-panel" id="adminPanel-chats">
+<div class="admin-toolbar">
+<div class="section-title" style="margin:0;flex:none">💬 مدیریت گروه‌ها و کانال‌ها</div>
+<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+<select id="adminChatFilter" onchange="renderAdminChats()" style="padding:11px 15px;border-radius:13px;border:1.5px solid var(--border);background:var(--input);color:var(--t1);outline:none">
+<option value="all">همه</option>
+<option value="group">فقط گروه‌ها</option>
+<option value="channel">فقط کانال‌ها</option>
+<option value="verified">فقط تایید شده</option>
+</select>
+<input type="text" id="adminChatSearch" placeholder="جستجوی چت..." oninput="renderAdminChats()">
+<button class="btn btn-secondary" onclick="loadAdminChats()">🔄 بروزرسانی</button>
+</div>
+</div>
+<div id="adminChatsList" style="display:flex;flex-direction:column;gap:8px"></div>
+</div>
+<div class="admin-panel" id="adminPanel-wallet">
+<div class="section-title spc">💰 مدیریت کیف پول و نرخ تبدیل</div>
+<div style="padding:16px;background:var(--input);border-radius:16px;border:1px solid var(--border);margin-bottom:20px">
+<h4 style="font-size:14px;font-weight:800;margin-bottom:12px;color:var(--spc-green)">⚙️ تنظیم نرخ تبدیل SPC به تومان</h4>
+<div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+<div style="flex:1;min-width:200px">
+<label style="display:block;margin-bottom:6px;font-size:12px;color:var(--t2);font-weight:700">ارزش هر 1 SPC (به تومان)</label>
+<input type="number" id="adminExchangeRate" min="1" max="100000000" value="<?= htmlspecialchars($wallet_config['spc_to_toman']) ?>" style="width:100%;padding:12px 16px;border-radius:12px;border:1.5px solid var(--border);background:var(--panel-solid);color:var(--t1);outline:none;font-size:14px;direction:ltr;text-align:left">
+</div>
+<button class="btn btn-spc" onclick="saveExchangeRate()">💾 ذخیره نرخ</button>
+</div>
+<div class="small-note" style="margin-top:10px">این نرخ برای نمایش معادل تومانی موجودی کاربران استفاده می‌شود.</div>
+</div>
+<div style="padding:16px;background:var(--input);border-radius:16px;border:1px solid var(--border)">
+<h4 style="font-size:14px;font-weight:800;margin-bottom:12px;color:var(--spc-green)">💳 مدیریت موجودی کاربران</h4>
+<div class="small-note" style="margin-bottom:12px">برای افزایش یا کاهش موجودی هر کاربر، از دکمه "✏️ ویرایش" در جدول کاربران استفاده کنید.</div>
+</div>
+</div>
+<div class="admin-panel" id="adminPanel-bot">
+<div class="section-title">🤖 ویرایش ربات خوش‌آمدگویی</div>
+<div id="botEditArea">
+<div style="padding:24px;text-align:center;color:var(--t2)">در حال بارگذاری...</div>
+</div>
+</div>
+<div class="admin-panel" id="adminPanel-stats">
+<div class="section-title">✨ آمار کلی</div>
+<div class="stats-grid" id="statsGrid"></div>
+</div>
+</div>
+</div>
 <div class="modal-overlay" id="adminUserModal">
-    <div class="modal">
-        <h3 id="adminUserModalTitle">ویرایش کاربر</h3>
-        <input type="hidden" id="adminUserId">
-        <div class="modal-field">
-            <label>آیدی</label>
-            <input type="text" id="adminUserUsername" placeholder="آیدی کاربر">
-        </div>
-        <div class="modal-field">
-            <label>نام نمایشی</label>
-            <input type="text" id="adminUserName">
-        </div>
-        <div class="modal-field">
-            <label>بیو</label>
-            <textarea id="adminUserBio"></textarea>
-        </div>
-        <div class="modal-field">
-            <label id="adminPasswordLabel">رمز عبور جدید (اختیاری)</label>
-            <input type="text" id="adminUserPassword" placeholder="برای تغییر رمز وارد کنید">
-        </div>
-        <div class="modal-field checkbox-row">
-            <label class="checkbox-item"><input type="checkbox" id="adminUserActive"> فعال</label>
-            <label class="checkbox-item"><input type="checkbox" id="adminUserBlocked"> مسدود</label>
-            <label class="checkbox-item"><input type="checkbox" id="adminUserIsAdmin"> ادمین</label>
-            <label class="checkbox-item"><input type="checkbox" id="adminUserSearchable"> قابل جستجو</label>
-        </div>
-        <div class="modal-actions">
-            <button class="btn btn-secondary" onclick="closeModal('adminUserModal')">انصراف</button>
-            <button class="btn btn-primary" onclick="saveAdminUser()">ذخیره</button>
-        </div>
-    </div>
+<div class="modal">
+<div class="modal-head">
+<div class="modal-head-icon">👤</div>
+<h3 id="adminUserModalTitle">ویرایش کاربر</h3>
+<button class="icon-btn" onclick="closeModal('adminUserModal')">✖️</button>
 </div>
-
-<!-- Attachment Modal -->
+<input type="hidden" id="adminUserId">
+<div class="modal-field"><label>@ آیدی</label><input type="text" id="adminUserUsername" style="direction:ltr;text-align:left"></div>
+<div class="modal-field"><label>نام نمایشی</label><input type="text" id="adminUserName"></div>
+<div class="modal-field"><label>بیو</label><textarea id="adminUserBio"></textarea></div>
+<div class="modal-field"><label id="adminPasswordLabel">🔑 رمز عبور</label><input type="text" id="adminUserPassword" style="direction:ltr;text-align:left"></div>
+<div class="modal-field checkbox-row">
+<label class="checkbox-item"><input type="checkbox" id="adminUserActive"> فعال</label>
+<label class="checkbox-item"><input type="checkbox" id="adminUserBlocked"> مسدود</label>
+<label class="checkbox-item"><input type="checkbox" id="adminUserIsAdmin"> ادمین</label>
+<label class="checkbox-item"><input type="checkbox" id="adminUserSearchable"> قابل جستجو</label>
+<label class="checkbox-item"><input type="checkbox" id="adminUserVerified"> تیک تایید</label>
+</div>
+<div class="section-title vip">⭐ اشتراک پرمیوم VIP</div>
+<div id="adminPremiumStatus" style="margin-bottom:12px"></div>
+<div class="modal-field">
+<label>عملیات پرمیوم</label>
+<select id="adminPremiumAction" onchange="updatePremiumActionUI()" style="padding:12px 16px;border-radius:14px;border:1.5px solid var(--border);background:var(--input);color:var(--t1);outline:none;font-size:14px">
+<option value="keep">بدون تغییر</option>
+<option value="add_days">افزودن روز به اشتراک فعلی</option>
+<option value="set_days">تنظیم تعداد روز (از امروز)</option>
+<option value="remove">لغو اشتراک پرمیوم</option>
+</select>
+</div>
+<div class="modal-field" id="adminPremiumDaysField">
+<label>تعداد روز (0 تا 3650)</label>
+<input type="number" id="adminPremiumDays" min="0" max="3650" value="30" style="direction:ltr;text-align:left">
+<div class="small-note">برای اشتراک دائمی عدد بزرگ مثل 3650 وارد کنید</div>
+</div>
+<div class="section-title spc">💰 مدیریت کیف پول</div>
+<div id="adminWalletStatus" style="margin-bottom:12px"></div>
+<div class="modal-field">
+<label>عملیات کیف پول</label>
+<select id="adminWalletAction" style="padding:12px 16px;border-radius:14px;border:1.5px solid var(--border);background:var(--input);color:var(--t1);outline:none;font-size:14px">
+<option value="keep">بدون تغییر</option>
+<option value="add">افزایش موجودی</option>
+<option value="subtract">کاهش موجودی</option>
+<option value="set">تنظیم موجودی</option>
+</select>
+</div>
+<div class="modal-field">
+<label>مقدار SPC</label>
+<input type="number" id="adminWalletAmount" min="0" max="100000000" value="0" style="direction:ltr;text-align:left">
+<div class="small-note">برای "بدون تغییر" این فیلد نادیده گرفته می‌شود</div>
+</div>
+<div class="modal-actions">
+<button class="btn btn-secondary" onclick="closeModal('adminUserModal')">انصراف</button>
+<button class="btn btn-primary" onclick="saveAdminUser()">💾 ذخیره</button>
+</div>
+</div>
+</div>
 <div class="modal-overlay" id="attachModal">
-    <div class="modal">
-        <h3 id="attachModalTitle">ارسال فایل</h3>
-        <div class="attachment-preview" id="attachPreview"></div>
-        <div class="file-meta" id="attachMeta"></div>
-        <div class="modal-field" style="margin-top:14px">
-            <label>کپشن / توضیحات</label>
-            <textarea id="attachCaption" placeholder="توضیحاتی برای این فایل بنویسید..." rows="3"></textarea>
-        </div>
-        <div class="modal-actions">
-            <button class="btn btn-secondary" onclick="cancelAttachment()">انصراف</button>
-            <button class="btn btn-primary" onclick="sendAttachment()">ارسال</button>
-        </div>
-    </div>
+<div class="modal">
+<div class="modal-head">
+<div class="modal-head-icon" id="attachIcon">📄</div>
+<h3 id="attachModalTitle">ارسال فایل</h3>
+<button class="icon-btn" onclick="cancelAttachment()">✖️</button>
 </div>
-
+<div class="attachment-preview" id="attachPreview"></div>
+<div class="file-meta" id="attachMeta"></div>
+<div class="modal-field" style="margin-top:14px">
+<label>کپشن / توضیحات</label>
+<textarea id="attachCaption" placeholder="توضیحاتی برای این فایل بنویسید..." rows="3"></textarea>
+</div>
+<div class="modal-actions">
+<button class="btn btn-secondary" onclick="cancelAttachment()">انصراف</button>
+<button class="btn btn-primary" onclick="sendAttachment()">➤ ارسال</button>
+</div>
+</div>
+</div>
+<div class="modal-overlay" id="membersModal">
+<div class="modal">
+<div class="modal-head">
+<div class="modal-head-icon">👥</div>
+<h3 id="membersTitle">اعضا</h3>
+<button class="icon-btn" onclick="closeModal('membersModal')">✖️</button>
+</div>
+<div id="membersList" style="max-height:400px;overflow-y:auto;display:flex;flex-direction:column;gap:4px"></div>
+<div class="modal-actions">
+<button class="btn btn-secondary" onclick="closeModal('membersModal')">بستن</button>
+<button class="btn btn-primary" id="addMemberBtnInModal" onclick="openAddMembersModal()" style="display:none">➕ افزودن عضو</button>
+</div>
+</div>
+</div>
+<div class="modal-overlay" id="addMembersModal">
+<div class="modal">
+<div class="modal-head">
+<div class="modal-head-icon">➕</div>
+<h3>افزودن عضو</h3>
+<button class="icon-btn" onclick="closeModal('addMembersModal')">✖️</button>
+</div>
+<div class="modal-field">
+<label>انتخاب کاربران</label>
+<input type="text" id="addMemberSearch" placeholder="جستجوی آیدی یا نام کاربر..." oninput="searchAddMembers()">
+<div class="selected-chips" id="addMemberChips"></div>
+<div class="users-list" id="addMembersList" style="margin-top:8px"></div>
+</div>
+<div class="modal-actions">
+<button class="btn btn-secondary" onclick="closeModal('addMembersModal')">انصراف</button>
+<button class="btn btn-primary" onclick="submitAddMembers()">➕ افزودن</button>
+</div>
+</div>
+</div>
 <div class="toast" id="toast"></div>
-
 <script>
 const currentUser = <?= json_encode($safe_user, JSON_UNESCAPED_UNICODE) ?>;
 const LOGO_URL = <?= json_encode($LOGO_URL) ?>;
-const BOT_ASSISTANT_ID = 'bot_assistant';
-
+const NORMAL_MAX_UPLOAD_MB = <?= NORMAL_MAX_UPLOAD_MB ?>;
+const PREMIUM_MAX_UPLOAD_MB = <?= PREMIUM_MAX_UPLOAD_MB ?>;
+const NORMAL_BIO_MAX = <?= NORMAL_BIO_MAX ?>;
+const PREMIUM_BIO_MAX = <?= PREMIUM_BIO_MAX ?>;
+const VIP_TICK_URL = 'https://chat.spotera.ir/tick/vip1.png';
+const VERIFIED_TICK_URL = 'https://chat.spotera.ir/tick/icons8-tick-94.png';
+const ALLOWED_PREMIUM_COLORS = ['', '#FFD700', '#FF6B6B', '#4ECDC4', '#A78BFA', '#F59E0B', '#EC4899', '#10B981', '#3B82F6'];
+const ALLOWED_MSG_COLORS = ['', '#FF6B6B', '#4ECDC4', '#A78BFA', '#F59E0B', '#EC4899', '#10B981', '#3B82F6', '#FFD700', '#FF1493', '#00CED1', '#9370DB'];
+let spcToToman = <?= $wallet_config['spc_to_toman'] ?>;
+function getVerifiedBadge() {
+return `<span class="verified-badge" onclick="event.stopPropagation();showToast('این صفحه تایید شده است')"><img src="${VERIFIED_TICK_URL}" alt="تایید شده"></span>`;
+}
+function getVipBadge(animated = true) {
+return `<span class="vip-badge ${animated ? 'animated' : ''}" onclick="event.stopPropagation();showToast('🌟 کاربر پرمیوم VIP')" title="کاربر پرمیوم"><img src="${VIP_TICK_URL}" alt="VIP"></span>`;
+}
+function badgesHtml(user) {
+let html = '';
+if (user.verified) html += ' ' + getVerifiedBadge();
+if (user.premium) html += ' ' + getVipBadge(true);
+return html;
+}
+function formatNumber(num) {
+return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+function formatToman(amount) {
+return formatNumber(amount) + ' تومان';
+}
 let chats = [];
 let currentChat = null;
+let currentMessages = [];
 let selectedMembers = [];
-let messagePoller = null;
+let selectedMembersData = {};
+let addMembersList = [];
+let addMembersSelected = [];
 let currentCreateType = 'private';
 let fabOpen = false;
 let attachOpen = false;
-
 let adminStats = null;
 let adminUsers = [];
+let adminChats = [];
+let adminBot = null;
 let pendingFile = null;
 let pendingObjectUrl = null;
-
-let mediaRecorder = null;
-let audioChunks = [];
-let recordingStream = null;
-let recordingInterval = null;
-let recordingStart = 0;
-let isRecording = false;
-
-let editChatAvatarPath = '';
-
-// ============ NOTIFICATIONS ============
-let notifPermission = 'default';
-let notifEnabled = false;
-let previousChatsSnapshot = {}; // {chatId: lastMessageTime}
-
-function initNotifications() {
-    if (!('Notification' in window)) {
-        console.warn('Notification API not supported');
-        return;
-    }
-    notifPermission = Notification.permission;
-    notifEnabled = localStorage.getItem('notif_enabled_' + currentUser.id) === '1';
-    updateNotifUI();
-}
-
-function updateNotifUI() {
-    const btn = document.getElementById('notifBtn');
-    const permPill = document.getElementById('notifPermPill');
-    const permBtn = document.getElementById('notifPermBtn');
-    const toggle = document.getElementById('profileNotifEnabled');
-
-    if (btn) {
-        if (notifEnabled && notifPermission === 'granted') {
-            btn.classList.add('notif-enabled');
-            btn.textContent = '🔔';
-            btn.title = 'اعلان‌ها فعال است';
-        } else if (notifPermission === 'granted') {
-            btn.classList.remove('notif-enabled');
-            btn.textContent = '🔕';
-            btn.title = 'اعلان‌ها غیرفعال است';
-        } else {
-            btn.classList.remove('notif-enabled');
-            btn.textContent = '🔕';
-            btn.title = 'اعلان‌ها - نیاز به مجوز';
-        }
-    }
-
-    if (toggle) {
-        toggle.checked = notifEnabled && notifPermission === 'granted';
-    }
-
-    if (permPill) {
-        if (notifPermission === 'granted') {
-            permPill.textContent = notifEnabled ? 'فعال' : 'در انتظار فعال‌سازی';
-            permPill.className = 'notif-status-pill' + (notifEnabled ? ' on' : '');
-        } else if (notifPermission === 'denied') {
-            permPill.textContent = 'مسدود شده';
-            permPill.className = 'notif-status-pill';
-        } else {
-            permPill.textContent = 'نیاز به مجوز';
-            permPill.className = 'notif-status-pill';
-        }
-    }
-
-    if (permBtn) {
-        if (notifPermission === 'granted') {
-            permBtn.style.display = 'none';
-        } else if (notifPermission === 'denied') {
-            permBtn.style.display = 'block';
-            permBtn.disabled = true;
-            permBtn.textContent = '⚠️ مرورگر اعلان را مسدود کرده است';
-        } else {
-            permBtn.style.display = 'block';
-            permBtn.disabled = false;
-            permBtn.textContent = '🔔 درخواست مجوز اعلان از مرورگر';
-        }
-    }
-}
-
-async function requestNotifPermission() {
-    if (!('Notification' in window)) {
-        showToast('مرورگر شما از اعلان پشتیبانی نمی‌کند');
-        return;
-    }
-    try {
-        const permission = await Notification.requestPermission();
-        notifPermission = permission;
-        if (permission === 'granted') {
-            showToast('مجوز اعلان اعطا شد ✅');
-            // Auto-enable if not set
-            if (!notifEnabled) {
-                notifEnabled = true;
-                localStorage.setItem('notif_enabled_' + currentUser.id, '1');
-            }
-        } else if (permission === 'denied') {
-            showToast('اعلان توسط مرورگر مسدود شد. از تنظیمات مرورگر فعال کنید.');
-            notifEnabled = false;
-            localStorage.setItem('notif_enabled_' + currentUser.id, '0');
-        } else {
-            showToast('درخواست بسته شد');
-        }
-    } catch (e) {
-        showToast('خطا در درخواست مجوز');
-    }
-    updateNotifUI();
-}
-
-function toggleNotifications() {
-    if (notifPermission === 'denied') {
-        showToast('اعلان مسدود است. تنظیمات مرورگر را بررسی کنید');
-        openProfileModal();
-        return;
-    }
-    if (notifPermission !== 'granted') {
-        requestNotifPermission();
-        return;
-    }
-    notifEnabled = !notifEnabled;
-    localStorage.setItem('notif_enabled_' + currentUser.id, notifEnabled ? '1' : '0');
-    showToast(notifEnabled ? 'اعلان‌ها فعال شد 🔔' : 'اعلان‌ها غیرفعال شد 🔕');
-    updateNotifUI();
-}
-
-function toggleNotifPref(checkbox) {
-    if (notifPermission !== 'granted') {
-        checkbox.checked = false;
-        requestNotifPermission();
-        return;
-    }
-    notifEnabled = checkbox.checked;
-    localStorage.setItem('notif_enabled_' + currentUser.id, notifEnabled ? '1' : '0');
-    showToast(notifEnabled ? 'اعلان‌ها فعال شد' : 'اعلان‌ها غیرفعال شد');
-    updateNotifUI();
-}
-
-function showNativeNotification(title, body, chatId, icon) {
-    if (!notifEnabled || notifPermission !== 'granted') return;
-    // Don't notify if we're currently viewing that chat
-    if (currentChat && currentChat.id === chatId && document.hasFocus()) return;
-
-    try {
-        const notif = new Notification(title, {
-            body: body,
-            icon: icon || LOGO_URL,
-            badge: LOGO_URL,
-            tag: 'chat_' + chatId,
-            requireInteraction: false,
-            silent: false
-        });
-
-        notif.onclick = function() {
-            window.focus();
-            if (chatId) openChat(chatId);
-            notif.close();
-        };
-
-        // Auto-close after 6 seconds
-        setTimeout(() => {
-            try { notif.close(); } catch(e) {}
-        }, 6000);
-    } catch (e) {
-        console.error('Notification error:', e);
-    }
-}
-
-function checkAndNotifyNewMessages(newChats) {
-    if (!notifEnabled || notifPermission !== 'granted') return;
-
-    const newSnapshot = {};
-    newChats.forEach(c => {
-        newSnapshot[c.id] = {
-            last_time: c.last_time || 0,
-            last_is_mine: c.last_is_mine,
-            last_message: c.last_message,
-            last_user_id: c.last_user_id,
-            last_username: c.last_username,
-            display_name: c.display_name,
-            type: c.type,
-            name: c.name,
-            avatar_path: c.avatar_path || c.avatar_image
-        };
-    });
-
-    // Compare with previous snapshot
-    Object.keys(newSnapshot).forEach(chatId => {
-        const curr = newSnapshot[chatId];
-        const prev = previousChatsSnapshot[chatId];
-
-        // New message if:
-        // 1. This chat didn't exist before
-        // 2. last_time changed AND message is NOT from us AND there's unread
-        if (!prev) {
-            // First load - don't notify
-        } else if (curr.last_time > prev.last_time && !curr.last_is_mine) {
-            // Only notify if there's unread (we haven't read it yet)
-            const chat = newChats.find(c => c.id === chatId);
-            if (chat && (chat.unread_count || 0) > 0) {
-                // Don't notify if currently viewing this chat
-                if (!(currentChat && currentChat.id === chatId && document.hasFocus())) {
-                    const senderName = curr.type === 'private'
-                        ? (curr.display_name || 'کاربر')
-                        : ((curr.last_username || 'کاربر') + ' در ' + (curr.name || curr.display_name));
-
-                    let icon = LOGO_URL;
-                    if (curr.avatar_path) icon = window.location.origin + '/' + curr.avatar_path;
-
-                    showNativeNotification(
-                        senderName,
-                        curr.last_message || 'پیام جدید',
-                        chatId,
-                        icon
-                    );
-                }
-            }
-        }
-    });
-
-    previousChatsSnapshot = newSnapshot;
-}
-
-// ============ END NOTIFICATIONS ============
-
+let lastRenderKey = '';
+let lastMessageCount = 0;
+let viewProfileTarget = null;
+let forwardTargetMsg = null;
+let replyingTo = null;
+let liveState = null;
+let liveStopped = false;
+let liveRunning = false;
+let knownMessageIds = new Set();
+let selectedPremiumColor = currentUser.premium_color || '';
+let selectedMsgColor = '';
 function initTheme() {
-    const saved = localStorage.getItem('theme') || 'dark';
-    document.body.setAttribute('data-theme', saved);
-    document.getElementById('themeBtn').textContent = saved === 'dark' ? '☀️' : '🌙';
+const saved = localStorage.getItem('theme') || 'dark';
+document.body.dataset.theme = saved;
+document.getElementById('themeBtn').textContent = saved === 'dark' ? '☀️' : '🌙';
 }
-
 function toggleTheme() {
-    const cur = document.body.getAttribute('data-theme');
-    const next = cur === 'dark' ? 'light' : 'dark';
-    document.body.setAttribute('data-theme', next);
-    localStorage.setItem('theme', next);
-    document.getElementById('themeBtn').textContent = next === 'dark' ? '☀️' : '🌙';
+const cur = document.body.dataset.theme;
+const next = cur === 'dark' ? 'light' : 'dark';
+document.body.dataset.theme = next;
+localStorage.setItem('theme', next);
+document.getElementById('themeBtn').textContent = next === 'dark' ? '☀️' : '🌙';
 }
-
 function showToast(msg) {
-    const t = document.getElementById('toast');
-    t.textContent = msg;
-    t.className = 'toast show';
-    setTimeout(() => t.className = 'toast', 2500);
+const t = document.getElementById('toast');
+t.textContent = msg;
+t.className = 'toast show';
+setTimeout(() => t.className = 'toast', 3000);
 }
-
 function escapeHtml(s) {
-    if (!s) return '';
-    return String(s).replace(/[&<>"']/g, m => ({
-        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-    }[m]));
+if (!s) return '';
+return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
-
-function formatBytes(bytes) {
-    if (bytes === 0) return '0 B';
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + sizes[i];
+function formatTime(ts) { return new Date(ts * 1000).toLocaleTimeString('fa-IR', {hour: '2-digit', minute: '2-digit'}); }
+function formatDate(ts) { return new Date(ts * 1000).toLocaleDateString('fa-IR'); }
+function formatDateTime(ts) {
+if (!ts) return '-';
+return new Date(ts * 1000).toLocaleString('fa-IR', {year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
 }
-
-function formatDate(ts) {
-    return new Date(ts * 1000).toLocaleDateString('fa-IR');
+function formatBytes(bytes) { if (bytes === 0) return '0 B'; const sizes = ['B','KB','MB','GB']; const i = Math.floor(Math.log(bytes) / Math.log(1024)); return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + sizes[i]; }
+function resolveFileUrl(path) {
+if (!path) return '';
+if (/^https?:\/\//i.test(path)) return path;
+return '?action=serve_file&p=' + encodeURIComponent(String(path).replace(/^\/+/, ''));
 }
-
-function formatTime(ts) {
-    return new Date(ts * 1000).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' });
-}
-
-function formatDuration(ms) {
-    const s = Math.floor(ms / 1000);
-    const m = Math.floor(s / 60);
-    const sec = s % 60;
-    return `${m}:${sec.toString().padStart(2, '0')}`;
-}
-
 function linkify(text) {
-    if (!text) return '';
-    const urlRegex = /(https?:\/\/[^\s<>"']+)|(?:^|\s)((?:www\.)[^\s<>"']+)|((?:[a-zA-Z0-9-]+\.)+(?:com|net|org|ir|io|co|info|me|tv|app|dev|xyz)(?:\/[^\s<>"']*)?)/gi;
-    return escapeHtml(text).replace(urlRegex, (match) => {
-        let url = match.trim();
-        let prefix = '';
-        if (match.startsWith(' ')) {
-            prefix = ' ';
-            url = match.slice(1);
-        }
-        let fullUrl = url;
-        if (!/^https?:\/\//i.test(fullUrl)) fullUrl = 'https://' + fullUrl;
-        return `${prefix}<a href="${escapeHtml(fullUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`;
-    });
+if (!text) return '';
+let html = escapeHtml(text);
+return html.replace(/(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)/gi, function(url) {
+const full = /^https?:\/\//i.test(url) ? url : 'https://' + url;
+return '<a href="' + escapeHtml(full) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(url) + '</a>';
+});
 }
-
-function renderTicks(seen) {
-    const singleTick = '<svg viewBox="0 0 24 24" width="14" height="14"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z" fill="currentColor"/></svg>';
-    const doubleTick = '<svg viewBox="0 0 24 24" width="14" height="14"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z" fill="currentColor"/><path d="M18 7.5l-1.41-1.41-7.59 7.59 1.41 1.41L18 7.5z" fill="currentColor" transform="translate(-4,0)"/></svg>';
-
-    if (seen) {
-        return `<span class="msg-ticks seen">${doubleTick}</span>`;
-    } else {
-        return `<span class="msg-ticks sent">${singleTick}</span>`;
-    }
+function typeIcon(type) {
+if (type === 'group') return '👥';
+if (type === 'channel') return '📣';
+if (type === 'saved') return '🔖';
+return '';
 }
-
+function getAvatarHTML(displayName, avatarPath) {
+if (avatarPath) return '<img src="' + escapeHtml(resolveFileUrl(avatarPath)) + '" alt="">';
+return escapeHtml((displayName || '?')[0].toUpperCase());
+}
 function avatarClass(type) {
-    if (type === 'group') return 'chat-avatar group';
-    if (type === 'channel') return 'chat-avatar channel';
-    return 'chat-avatar';
+if (type === 'group') return 'chat-avatar group';
+if (type === 'channel') return 'chat-avatar channel';
+if (type === 'saved') return 'chat-avatar saved';
+return 'chat-avatar';
 }
-
-function getAvatarHTML(displayName, avatarPath, options = {}) {
-    const useLogo = options.useLogo || false;
-    if (useLogo) return `<img src="${escapeHtml(LOGO_URL)}" alt="">`;
-    if (avatarPath) return `<img src="${escapeHtml(avatarPath)}" alt="${escapeHtml(displayName || '')}">`;
-    return escapeHtml((displayName || '?')[0].toUpperCase());
-}
-
-function toggleFab() {
-    const container = document.getElementById('fabContainer');
-    const btn = document.getElementById('fabBtn');
-    fabOpen = !fabOpen;
-    if (fabOpen) {
-        container.classList.add('open');
-        btn.classList.add('active');
-    } else {
-        container.classList.remove('open');
-        btn.classList.remove('active');
-    }
-}
-
-function closeFab() {
-    const container = document.getElementById('fabContainer');
-    const btn = document.getElementById('fabBtn');
-    fabOpen = false;
-    container.classList.remove('open');
-    btn.classList.remove('active');
-}
-
-function toggleAttach() {
-    const pop = document.getElementById('attachPop');
-    attachOpen = !attachOpen;
-    if (attachOpen) pop.classList.add('active');
-    else pop.classList.remove('active');
-}
-
-function closeAttach() {
-    attachOpen = false;
-    document.getElementById('attachPop').classList.remove('active');
-}
-
-function pickAttach(type) {
-    closeAttach();
-    if (type === 'image') document.getElementById('imageInput').click();
-    else if (type === 'video') document.getElementById('videoInput').click();
-    else document.getElementById('fileInput').click();
-}
-
-function createChat(type) {
-    currentCreateType = type;
-    closeFab();
-    document.getElementById('newChatModal').classList.add('active');
-    const titles = { private: 'پیام خصوصی جدید', group: 'ایجاد گروه جدید', channel: 'ایجاد کانال جدید' };
-    document.getElementById('newChatTitle').textContent = titles[type] || 'ایجاد چت جدید';
-    document.getElementById('chatNameField').style.display = type === 'private' ? 'none' : 'block';
-    document.getElementById('chatDescField').style.display = type === 'private' ? 'none' : 'block';
-    document.getElementById('membersLabel').textContent = type === 'private' ? 'انتخاب کاربر' : 'افزودن اعضا (اختیاری)';
-    document.getElementById('newChatName').value = '';
-    document.getElementById('newChatDesc').value = '';
-    selectedMembers = [];
-    loadUsers();
-}
-
-function updateTotalNotifBadge() {
-    const total = chats.reduce((sum, c) => sum + (c.unread_count || 0), 0);
-    const badge = document.getElementById('totalNotifBadge');
-    if (total > 0) {
-        badge.textContent = total > 99 ? '99+' : total;
-        badge.style.display = 'flex';
-    } else {
-        badge.style.display = 'none';
-    }
-    updateDocumentTitle();
-}
-
-function updateDocumentTitle() {
-    const total = chats.reduce((sum, c) => sum + (c.unread_count || 0), 0);
-    const baseTitle = 'داشبورد اسپاتیرا | پیام‌رسان';
-    document.title = total > 0 ? `(${total}) ${baseTitle}` : baseTitle;
-}
-
-async function loadChats() {
-    try {
-        const res = await fetch('?action=get_chats');
-        const data = await res.json();
-        const newChats = data.chats || [];
-        checkAndNotifyNewMessages(newChats);
-        chats = newChats;
-        updateTotalNotifBadge();
-        renderChats();
-    } catch (e) { console.error(e); }
-}
-
-function renderChats() {
-    const list = document.getElementById('chatList');
-    const q = document.getElementById('searchChats').value.trim().toLowerCase();
-    const filtered = q ? chats.filter(c => (c.display_name || '').toLowerCase().includes(q)) : chats;
-
-    if (filtered.length === 0) {
-        list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-secondary)">چتی یافت نشد</div>';
-        return;
-    }
-
-    list.innerHTML = filtered.map(c => {
-        let typeBadge = '';
-        if (c.type === 'group') typeBadge = '<span class="chat-type-badge" style="background:#ff6b6b">گروه</span>';
-        if (c.type === 'channel') typeBadge = '<span class="chat-type-badge">کانال</span>';
-
-        let useLogo = false, avType = 'user';
-        if (c.type === 'private' && (c.other_user_id === BOT_ASSISTANT_ID || c.other_is_bot)) useLogo = true;
-        else if (c.type === 'group') avType = 'group';
-        else if (c.type === 'channel') avType = 'channel';
-
-        const avatarHTML = getAvatarHTML(c.display_name, c.avatar_path, { useLogo, type: avType });
-        const preview = c.last_message || (c.type === 'channel' ? 'هنوز پیامی نیست' : 'هنوز پیامی نیست');
-
-        let lastTickHtml = '';
-        if (c.last_is_mine) {
-            lastTickHtml = renderTicks(c.last_seen);
-        }
-
-        const unreadHtml = (c.unread_count > 0) ? `<div class="unread-badge">${c.unread_count > 99 ? '99+' : c.unread_count}</div>` : '';
-
-        return `
-            <div class="chat-item ${currentChat?.id === c.id ? 'active' : ''}" onclick="openChat('${c.id}')">
-                <div class="${avatarClass(avType)}">${avatarHTML}</div>
-                <div class="chat-info">
-                    <div class="chat-top">
-                        <div class="chat-name">${typeBadge}${escapeHtml(c.display_name || 'نامشخص')}</div>
-                        <div class="chat-time">${formatTime(c.last_time || c.created_at)}</div>
-                    </div>
-                    <div class="chat-preview-wrap">
-                        <div class="chat-preview">${lastTickHtml}${escapeHtml(preview)}</div>
-                        ${unreadHtml}
-                    </div>
-                </div>
-            </div>
-        `;
-    }).join('');
-}
-
-function filterChats() { renderChats(); }
-
-async function openChat(chatId) {
-    currentChat = chats.find(c => c.id === chatId) || { id: chatId };
-    renderChats();
-    document.getElementById('app').classList.add('show-chat');
-    document.getElementById('emptyState').style.display = 'none';
-    document.getElementById('chatContainer').style.display = 'flex';
-    try {
-        const res = await fetch(`?action=get_messages&chat_id=${encodeURIComponent(chatId)}`);
-        const data = await res.json();
-        if (data.error) { showToast(data.error); return; }
-        currentChat = { ...currentChat, ...data.chat };
-        renderChatHeader();
-        renderMessages(data.messages || []);
-        startPolling();
-        markChatRead(chatId);
-    } catch (e) { console.error(e); }
-}
-
-async function markChatRead(chatId) {
-    try {
-        const formData = new FormData();
-        formData.append('chat_id', chatId);
-        await fetch('?action=mark_chat_read', { method: 'POST', body: formData });
-        const c = chats.find(x => x.id === chatId);
-        if (c) {
-            c.unread_count = 0;
-            renderChats();
-            updateTotalNotifBadge();
-        }
-    } catch (e) {}
-}
-
-function renderChatHeader() {
-    const displayName = currentChat.type === 'private' ? (currentChat.display_name || '?') : (currentChat.name || '?');
-    let useLogo = false, avType = 'user';
-    if (currentChat.type === 'private' && (currentChat.other_user_id === BOT_ASSISTANT_ID || currentChat.other_is_bot)) useLogo = true;
-    else if (currentChat.type === 'group') avType = 'group';
-    else if (currentChat.type === 'channel') avType = 'channel';
-
-    const avatarEl = document.getElementById('chatAvatar');
-    avatarEl.className = avatarClass(avType);
-    const avatarPath = currentChat.type === 'private' ? (currentChat.avatar_path || '') : (currentChat.avatar_image || '');
-    avatarEl.innerHTML = getAvatarHTML(displayName, avatarPath, { useLogo, type: avType });
-    document.getElementById('chatName').textContent = displayName;
-
-    let status = '';
-    if (currentChat.type === 'private') {
-        status = useLogo ? '✨ دستیار هوشمند' : '@' + (currentChat.display_name || '');
-    } else if (currentChat.type === 'group') status = `${currentChat.members?.length || 0} عضو`;
-    else if (currentChat.type === 'channel') status = `${currentChat.members?.length || 0} دنبال‌کننده`;
-    document.getElementById('chatStatus').textContent = status;
-}
-
-function renderMessages(messages) {
-    const container = document.getElementById('messages');
-    const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
-    container.innerHTML = messages.map(m => renderMessage(m)).join('');
-    if (atBottom) container.scrollTop = container.scrollHeight;
-}
-
-function renderMessage(m) {
-    const isMe = m.user_id === currentUser.id;
-    const isAssistant = m.user_id === BOT_ASSISTANT_ID;
-    const time = formatTime(m.created_at);
-
-    let fileHtml = '';
-    if (m.file_path) {
-        if (m.file_type === 'image') {
-            fileHtml = `<div class="message-file"><img src="${escapeHtml(m.file_path)}" alt="" loading="lazy"></div>`;
-        } else if (m.file_type === 'video') {
-            fileHtml = `<div class="message-file"><video src="${escapeHtml(m.file_path)}" controls preload="metadata" playsinline></video></div>`;
-        } else if (m.file_type === 'audio') {
-            const bars = Array.from({length: 20}, () => Math.floor(Math.random() * 70) + 30);
-            fileHtml = `
-                <div class="voice-msg" data-src="${escapeHtml(m.file_path)}">
-                    <button class="voice-play-btn" onclick="toggleVoicePlay(this)">▶</button>
-                    <div class="voice-waveform">
-                        ${bars.map(h => `<div class="bar" style="height:${h}%"></div>`).join('')}
-                    </div>
-                    <div class="voice-time">🎵</div>
-                </div>
-            `;
-        } else {
-            fileHtml = `<div class="message-file"><a href="${escapeHtml(m.file_path)}" target="_blank" download="${escapeHtml(m.file_name || 'file')}">📎 ${escapeHtml(m.file_name || 'فایل')}</a></div>`;
-        }
-    }
-
-    const caption = m.file_path ? (m.caption || m.text || '') : '';
-    const normalText = m.file_path ? '' : (m.text || '');
-
-    const captionHtml = caption ? `<div class="message-text message-caption">${linkify(caption)}</div>` : '';
-    const textHtml = normalText ? `<div class="message-text">${linkify(normalText)}</div>` : '';
-
-    let previewHtml = '';
-    if (m.link_preview && (m.link_preview.title || m.link_preview.description)) {
-        const p = m.link_preview;
-        const imgHtml = p.image ? `<img class="link-preview-image" src="${escapeHtml(p.image)}" alt="" loading="lazy" onerror="this.style.display='none'">` : '';
-        previewHtml = `
-            <a href="${escapeHtml(p.url)}" target="_blank" rel="noopener noreferrer" class="link-preview-card" onclick="event.stopPropagation()">
-                ${imgHtml}
-                <div class="link-preview-content">
-                    ${p.site ? `<div class="link-preview-site">🌐 ${escapeHtml(p.site)}</div>` : ''}
-                    ${p.title ? `<div class="link-preview-title">${escapeHtml(p.title)}</div>` : ''}
-                    ${p.description ? `<div class="link-preview-desc">${escapeHtml(p.description)}</div>` : ''}
-                </div>
-            </a>
-        `;
-    }
-
-    const canDelete = isMe || currentUser.is_admin || (currentChat && currentChat.owner_id === currentUser.id);
-
-    let tickHtml = '';
-    if (isMe && currentChat) {
-        const seen = (m.seen_by || []).some(id => id !== currentUser.id && (currentChat.members || []).includes(id));
-        tickHtml = renderTicks(seen);
-    }
-
-    let actionsHtml = '';
-    if (isMe || canDelete) {
-        let buttons = [];
-        if (isMe) {
-            buttons.push(`<button type="button" class="msg-action-inline" onclick="editMessage('${m.id}')">✏️ ویرایش</button>`);
-        }
-        if (canDelete) {
-            buttons.push(`<button type="button" class="msg-action-inline danger" onclick="deleteMessage('${m.id}')">🗑️ حذف</button>`);
-        }
-        if (buttons.length > 0) {
-            actionsHtml = `<div class="message-actions-inline">${buttons.join('')}</div>`;
-        }
-    }
-
-    return `
-        <div class="message ${isMe ? 'me' : 'other'}" data-id="${m.id}">
-            ${!isMe && currentChat && currentChat.type !== 'private' ? `<div style="font-size:12px;font-weight:600;color:${isAssistant ? 'var(--accent)' : 'var(--accent-strong)'};margin-bottom:4px">${escapeHtml(m.username)}</div>` : ''}
-            ${fileHtml}
-            ${captionHtml}
-            ${textHtml}
-            ${previewHtml}
-            <div class="message-meta">
-                ${m.edited ? '<span class="message-edited">ویرایش شده</span>' : ''}
-                ${tickHtml}
-                <span>${time}</span>
-            </div>
-            ${actionsHtml}
-        </div>
-    `;
-}
-
-let currentVoiceAudio = null;
-let currentVoiceBtn = null;
-
-function toggleVoicePlay(btn) {
-    const voiceMsg = btn.closest('.voice-msg');
-    const src = voiceMsg.dataset.src;
-    const bars = voiceMsg.querySelectorAll('.bar');
-    const timeEl = voiceMsg.querySelector('.voice-time');
-
-    if (currentVoiceAudio && currentVoiceBtn === btn) {
-        currentVoiceAudio.pause();
-        currentVoiceAudio.currentTime = 0;
-        btn.textContent = '▶';
-        bars.forEach(b => b.classList.remove('played'));
-        timeEl.textContent = '🎵';
-        currentVoiceAudio = null;
-        currentVoiceBtn = null;
-        return;
-    }
-
-    if (currentVoiceAudio) {
-        currentVoiceAudio.pause();
-        if (currentVoiceBtn) currentVoiceBtn.textContent = '▶';
-    }
-
-    const audio = new Audio(src);
-    currentVoiceAudio = audio;
-    currentVoiceBtn = btn;
-
-    audio.addEventListener('play', () => {
-        btn.textContent = '⏸';
-    });
-    audio.addEventListener('pause', () => {
-        btn.textContent = '▶';
-    });
-    audio.addEventListener('ended', () => {
-        btn.textContent = '▶';
-        bars.forEach(b => b.classList.remove('played'));
-        timeEl.textContent = '🎵';
-        currentVoiceAudio = null;
-        currentVoiceBtn = null;
-    });
-    audio.addEventListener('timeupdate', () => {
-        const progress = audio.currentTime / audio.duration;
-        const playedCount = Math.floor(progress * bars.length);
-        bars.forEach((b, i) => {
-            if (i < playedCount) b.classList.add('played');
-            else b.classList.remove('played');
-        });
-        const remaining = audio.duration - audio.currentTime;
-        timeEl.textContent = formatDuration(remaining * 1000);
-    });
-
-    audio.play().catch(() => {
-        btn.textContent = '▶';
-        showToast('خطا در پخش صدا');
-    });
-}
-
-function startPolling() {
-    if (messagePoller) clearInterval(messagePoller);
-    messagePoller = setInterval(async () => {
-        if (!currentChat) return;
-        try {
-            const res = await fetch(`?action=get_messages&chat_id=${encodeURIComponent(currentChat.id)}`);
-            const data = await res.json();
-            if (data.messages) renderMessages(data.messages);
-        } catch (e) {}
-    }, 3000);
-
-    if (window.chatsPoller) clearInterval(window.chatsPoller);
-    window.chatsPoller = setInterval(() => loadChats(), 5000);
-}
-
-function closeChat() {
-    document.getElementById('app').classList.remove('show-chat');
-    currentChat = null;
-    if (messagePoller) { clearInterval(messagePoller); messagePoller = null; }
-    document.getElementById('chatContainer').style.display = 'none';
-    document.getElementById('emptyState').style.display = 'flex';
-    renderChats();
-}
-
-async function sendMessage() {
-    if (isRecording) return;
-    const input = document.getElementById('messageInput');
-    const text = input.value.trim();
-    if (!text || !currentChat) return;
-
-    const formData = new FormData();
-    formData.append('chat_id', currentChat.id);
-    formData.append('text', text);
-
-    input.value = '';
-    input.style.height = 'auto';
-
-    try {
-        const res = await fetch('?action=send_message', { method: 'POST', body: formData });
-        const data = await res.json();
-        if (data.error) { showToast(data.error); return; }
-        loadChats();
-        openChat(currentChat.id);
-    } catch (e) { showToast('خطا در ارسال پیام'); }
-}
-
-function openAttachmentModal(file, type) {
-    pendingFile = file;
-    const preview = document.getElementById('attachPreview');
-    const meta = document.getElementById('attachMeta');
-    const title = document.getElementById('attachModalTitle');
-
-    preview.innerHTML = '';
-    meta.textContent = `${file.name} • ${formatBytes(file.size)}`;
-
-    if (type === 'image') title.textContent = '🖼️ ارسال تصویر';
-    else if (type === 'video') title.textContent = '🎬 ارسال ویدیو';
-    else title.textContent = '📄 ارسال فایل';
-
-    if (pendingObjectUrl) { URL.revokeObjectURL(pendingObjectUrl); pendingObjectUrl = null; }
-
-    if (file.type.startsWith('image/')) {
-        pendingObjectUrl = URL.createObjectURL(file);
-        preview.innerHTML = `<img src="${pendingObjectUrl}" alt="">`;
-    } else if (file.type.startsWith('video/')) {
-        pendingObjectUrl = URL.createObjectURL(file);
-        preview.innerHTML = `<video src="${pendingObjectUrl}" controls playsinline></video>`;
-    } else {
-        preview.innerHTML = `<div style="font-size:52px;text-align:center">📄<div style="font-size:13px;margin-top:10px;color:var(--text-secondary)">${escapeHtml(file.name)}</div></div>`;
-    }
-
-    document.getElementById('attachCaption').value = '';
-    document.getElementById('attachModal').classList.add('active');
-    setTimeout(() => document.getElementById('attachCaption').focus(), 300);
-}
-
-function cancelAttachment() {
-    pendingFile = null;
-    if (pendingObjectUrl) { URL.revokeObjectURL(pendingObjectUrl); pendingObjectUrl = null; }
-    document.getElementById('attachPreview').innerHTML = '';
-    document.getElementById('attachMeta').textContent = '';
-    document.getElementById('attachCaption').value = '';
-    closeModal('attachModal');
-}
-
-async function sendAttachment() {
-    if (!pendingFile || !currentChat) return;
-    const caption = document.getElementById('attachCaption').value.trim();
-    const formData = new FormData();
-    formData.append('chat_id', currentChat.id);
-    formData.append('caption', caption);
-    formData.append('file', pendingFile);
-
-    try {
-        const res = await fetch('?action=send_message', { method: 'POST', body: formData });
-        const data = await res.json();
-        if (data.error) { showToast(data.error); return; }
-        cancelAttachment();
-        loadChats();
-        openChat(currentChat.id);
-    } catch (e) { showToast('خطا در ارسال فایل'); }
-}
-
-async function editMessage(msgId) {
-    const msgEl = document.querySelector(`.message[data-id="${msgId}"]`);
-    if (!msgEl) return;
-    const captionEl = msgEl.querySelector('.message-caption');
-    const textEl = msgEl.querySelector('.message-text:not(.message-caption)');
-    const currentText = captionEl ? captionEl.innerText : (textEl ? textEl.innerText : '');
-    const newText = prompt('ویرایش پیام:', currentText);
-    if (newText === null || newText === currentText) return;
-    const formData = new FormData();
-    formData.append('message_id', msgId);
-    formData.append('text', newText);
-    const res = await fetch('?action=edit_message', { method: 'POST', body: formData });
-    const data = await res.json();
-    if (data.error) { showToast(data.error); return; }
-    openChat(currentChat.id);
-}
-
-async function deleteMessage(msgId) {
-    if (!confirm('این پیام حذف شود؟')) return;
-    const formData = new FormData();
-    formData.append('message_id', msgId);
-    const res = await fetch('?action=delete_message', { method: 'POST', body: formData });
-    const data = await res.json();
-    if (data.error) { showToast(data.error); return; }
-    openChat(currentChat.id);
-}
-
-async function loadUsers() {
-    const res = await fetch('?action=get_users');
-    const data = await res.json();
-    renderUsers(data.users || []);
-}
-
-function renderUsers(users) {
-    const list = document.getElementById('usersList');
-    if (users.length === 0) {
-        list.innerHTML = '<div style="padding:8px;text-align:center;color:var(--text-secondary);font-size:13px">کاربری یافت نشد</div>';
-        return;
-    }
-    list.innerHTML = users.map(u => {
-        const label = u.name ? `${escapeHtml(u.name)} (@${escapeHtml(u.username)})` : `@${escapeHtml(u.username)}`;
-        const avatarHtml = u.avatar
-            ? `<img src="${escapeHtml(u.avatar)}" alt="">`
-            : escapeHtml((u.name || u.username || '?')[0].toUpperCase());
-        return `<label class="user-option"><input type="checkbox" value="${u.id}" onchange="updateSelectedMembers()" ${selectedMembers.includes(u.id) ? 'checked' : ''}><div class="user-option-avatar">${avatarHtml}</div><span>${label}</span></label>`;
-    }).join('');
-}
-
-function updateSelectedMembers() {
-    selectedMembers = Array.from(document.querySelectorAll('#usersList input:checked')).map(i => i.value);
-}
-
-let searchTimeout;
-async function searchUsers() {
-    clearTimeout(searchTimeout);
-    const q = document.getElementById('userSearch').value.trim();
-    if (!q) { loadUsers(); return; }
-    searchTimeout = setTimeout(async () => {
-        const res = await fetch(`?action=search_users&q=${encodeURIComponent(q)}`);
-        const data = await res.json();
-        renderUsers(data.users || []);
-    }, 300);
-}
-
-async function submitCreateChat() {
-    const type = currentCreateType;
-    const formData = new FormData();
-    formData.append('type', type);
-    if (type !== 'private') {
-        const name = document.getElementById('newChatName').value.trim();
-        if (!name) { showToast('نام الزامی است'); return; }
-        formData.append('name', name);
-        formData.append('description', document.getElementById('newChatDesc').value);
-    } else {
-        if (selectedMembers.length === 0) { showToast('یک کاربر انتخاب کنید'); return; }
-    }
-    selectedMembers.forEach(m => formData.append('members[]', m));
-    try {
-        const res = await fetch('?action=create_chat', { method: 'POST', body: formData });
-        const data = await res.json();
-        if (data.error) { showToast(data.error); return; }
-        closeModal('newChatModal');
-        selectedMembers = [];
-        await loadChats();
-        if (data.chat) openChat(data.chat.id);
-        else if (data.chat_id) openChat(data.chat_id);
-    } catch (e) { showToast('خطا در ایجاد چت'); }
-}
-
 function closeModal(id) { document.getElementById(id).classList.remove('active'); }
-
+function openModal(id) { document.getElementById(id).classList.add('active'); }
+function toggleFab() {
+const container = document.getElementById('fabContainer');
+fabOpen = !fabOpen;
+container.classList.toggle('open', fabOpen);
+}
+function closeFab() {
+fabOpen = false;
+document.getElementById('fabContainer').classList.remove('open');
+}
+function toggleAttach() {
+const pop = document.getElementById('attachPop');
+attachOpen = !attachOpen;
+pop.classList.toggle('active', attachOpen);
+}
+function closeAttach() {
+attachOpen = false;
+document.getElementById('attachPop').classList.remove('active');
+}
+function pickAttach(type) {
+closeAttach();
+if (type === 'image') document.getElementById('imageInput').click();
+else if (type === 'video') document.getElementById('videoInput').click();
+else document.getElementById('fileInput').click();
+}
+function updateTotalNotifBadge() {
+const total = chats.reduce((sum, c) => sum + (c.type === 'saved' ? 0 : (c.unread_count || 0)), 0);
+const badge = document.getElementById('totalNotifBadge');
+if (total > 0) {
+badge.textContent = total > 99 ? '99+' : total;
+badge.style.display = 'inline-flex';
+} else {
+badge.style.display = 'none';
+}
+document.title = total > 0 ? '(' + total + ') پیام‌رسان' : 'پیام‌رسان';
+}
+function renderMsgColorPicker() {
+if (!currentUser.premium) {
+document.getElementById('msgColorPicker').style.display = 'none';
+return;
+}
+const picker = document.getElementById('msgColorPicker');
+let html = '<div class="msg-color-picker"><label>🎨 رنگ متن:</label>';
+html += `<div class="msg-color-option none ${selectedMsgColor === '' ? 'selected' : ''}" onclick="selectMsgColor('')" title="بدون رنگ">×</div>`;
+ALLOWED_MSG_COLORS.filter(c => c !== '').forEach(c => {
+html += `<div class="msg-color-option ${selectedMsgColor === c ? 'selected' : ''}" style="background:${c}" onclick="selectMsgColor('${c}')" title="${c}"></div>`;
+});
+html += '</div>';
+picker.innerHTML = html;
+picker.style.display = 'block';
+}
+function selectMsgColor(color) {
+selectedMsgColor = color;
+renderMsgColorPicker();
+}
+function buildChatItemHtml(c) {
+let avType = '';
+if (c.type === 'saved') avType = 'saved';
+else if (c.type === 'group') avType = 'group';
+else if (c.type === 'channel') avType = 'channel';
+const avatarHTML = c.type === 'saved' ? '🔖' : getAvatarHTML(c.display_name, c.avatar_path);
+const preview = c.last_message || (c.type === 'saved' ? 'فضای شخصی شما' : 'هنوز پیامی نیست');
+const tick = c.last_is_mine && c.type !== 'saved'
+? '<span class="ticks ' + (c.last_seen ? 'seen' : '') + '">' + (c.last_seen ? '✔✔' : '✔') + '</span>'
+: '';
+const unread = (c.unread_count > 0 && c.type !== 'saved')
+? '<div class="unread-badge">' + (c.unread_count > 99 ? '99+' : c.unread_count) + '</div>'
+: '';
+let verifiedHtml = '';
+if (c.type === 'private') {
+if (c.other_verified) verifiedHtml += ' ' + getVerifiedBadge();
+if (c.other_premium) verifiedHtml += ' ' + getVipBadge(true);
+} else if (c.type === 'group' || c.type === 'channel') {
+if (c.verified) verifiedHtml += ' ' + getVerifiedBadge();
+}
+return `
+<div class="${avatarClass(avType)}">${avatarHTML}</div>
+<div class="chat-info">
+<div class="chat-top">
+<div class="chat-name">${typeIcon(c.type)} ${escapeHtml(c.display_name || 'نامشخص')}${verifiedHtml}</div>
+<div class="chat-time">${formatTime(c.last_time || c.created_at)}</div>
+</div>
+<div class="chat-preview-wrap">
+<div class="chat-preview">${tick} ${escapeHtml(preview)}</div>
+${unread}
+</div>
+</div>
+</div>
+`;
+}
+function chatSignature(c) {
+return c.last_time + '|' + c.unread_count + '|' + (c.last_message||'') + '|' + c.last_seen + '|' + c.other_online + '|' + c.online_members_count + '|' + c.display_name + '|' + c.avatar_path + '|' + (c.other_premium||'') + '|' + (c.other_verified||'');
+}
+async function loadChats(forceFull = false) {
+try {
+const res = await fetch('?action=get_chats', {cache: 'no-store'});
+const data = await res.json();
+const newChats = data.chats || [];
+const oldMap = new Map(chats.map(c => [c.id, c]));
+const newMap = new Map(newChats.map(c => [c.id, c]));
+let listChanged = chats.length !== newChats.length;
+for (const nc of newChats) {
+const oc = oldMap.get(nc.id);
+if (!oc || chatSignature(oc) !== chatSignature(nc)) {
+listChanged = true;
+break;
+}
+}
+if (!listChanged) {
+for (const oc of chats) {
+if (!newMap.has(oc.id)) { listChanged = true; break; }
+}
+}
+chats = newChats;
+updateTotalNotifBadge();
+if (forceFull || listChanged) {
+renderChats();
+}
+if (currentChat) {
+const active = chats.find(c => c.id === currentChat.id);
+if (active) {
+currentChat = {...currentChat, ...active};
+renderChatHeader();
+if (active.unread_count > 0 && document.hasFocus()) {
+markChatRead(active.id);
+}
+}
+}
+} catch (e) {
+console.error(e);
+}
+}
+function renderChats() {
+const list = document.getElementById('chatList');
+const q = document.getElementById('searchChats').value.trim().toLowerCase();
+const filtered = q ? chats.filter(c => (c.display_name || '').toLowerCase().includes(q)) : chats;
+if (!filtered.length) {
+list.innerHTML = '<div style="padding:34px 20px;text-align:center;color:var(--t2)"><div style="font-size:34px;margin-bottom:10px">💬</div><div style="font-size:13px">چتی یافت نشد</div></div>';
+return;
+}
+const saved = filtered.filter(c => c.type === 'saved');
+const others = filtered.filter(c => c.type !== 'saved');
+const ordered = saved.concat(others);
+list.innerHTML = ordered.map(c => {
+return `
+<div class="chat-item ${currentChat?.id === c.id ? 'active' : ''}" data-chat-id="${c.id}" onclick="openChat('${c.id}')">
+${buildChatItemHtml(c)}
+</div>
+`;
+}).join('');
+}
+function filterChats() { renderChats(); }
+async function openChat(chatId) {
+currentChat = chats.find(c => c.id === chatId) || {id: chatId};
+renderChats();
+document.getElementById('app').classList.add('show-chat');
+document.getElementById('emptyState').style.display = 'none';
+document.getElementById('chatContainer').style.display = 'flex';
+closeFab();
+closeAttach();
+knownMessageIds = new Set();
+lastRenderKey = '';
+lastMessageCount = 0;
+selectedMsgColor = '';
+try {
+const res = await fetch('?action=get_messages&chat_id=' + encodeURIComponent(chatId), {cache: 'no-store'});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
+}
+currentChat = {...currentChat, ...data.chat};
+renderChatHeader();
+const messages = data.messages || [];
+currentMessages = messages;
+messages.forEach(m => knownMessageIds.add(m.id));
+const container = document.getElementById('messages');
+const q = document.getElementById('chatSearchInput')?.value.trim().toLowerCase();
+const renderList = q ? messages.filter(m => {
+const text = m.file_path ? (m.caption || m.file_name || '') : (m.text || '');
+return text.toLowerCase().includes(q) || (m.username || '').toLowerCase().includes(q);
+}) : messages;
+container.innerHTML = renderList.map(renderMessage).join('');
+container.scrollTop = container.scrollHeight;
+lastMessageCount = messages.length;
+lastRenderKey = messages.map(m => m.id + (m.edited ? 'e' : '') + (m.is_pinned ? 'p' : '') + JSON.stringify(m.reactions || {}) + (m.seen_by || []).join(',') + (m.message_color || '')).join('|');
+updatePinnedMessage(messages);
+updateInputState();
+renderMsgColorPicker();
+markChatRead(chatId);
+const input = document.getElementById('messageInput');
+input.value = loadDraft(chatId);
+if (input.value) {
+input.style.height = 'auto';
+input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+}
+} catch (e) {
+console.error(e);
+}
+}
+function closeChat() {
+const input = document.getElementById('messageInput');
+if (currentChat && input.value) {
+saveDraft(currentChat.id, input.value);
+} else if (currentChat) {
+saveDraft(currentChat.id, '');
+}
+cancelReply();
+document.getElementById('chatSearchBar').style.display = 'none';
+document.getElementById('chatSearchInput').value = '';
+document.getElementById('app').classList.remove('show-chat');
+currentChat = null;
+lastRenderKey = '';
+lastMessageCount = 0;
+knownMessageIds = new Set();
+document.getElementById('chatContainer').style.display = 'none';
+document.getElementById('emptyState').style.display = 'flex';
+document.getElementById('msgColorPicker').style.display = 'none';
+renderChats();
+}
+function updateInputState() {
+const wrap = document.getElementById('messageInputWrap');
+if (!currentChat) return;
+const canSend = !(currentChat.type === 'channel' && currentChat.owner_id !== currentUser.id && !currentUser.is_admin);
+wrap.style.display = canSend ? 'block' : 'none';
+if (canSend) renderMsgColorPicker();
+}
+function renderChatHeader() {
+const isSaved = currentChat.type === 'saved';
+const displayName = isSaved
+? (currentChat.name || 'پیام‌های ذخیره‌شده')
+: (currentChat.type === 'private' ? (currentChat.display_name || '?') : (currentChat.name || '?'));
+const avatarPath = currentChat.type === 'private' ? (currentChat.avatar_path || '') : (currentChat.avatar_image || '');
+const avatarEl = document.getElementById('chatAvatar');
+avatarEl.className = avatarClass(isSaved ? 'saved' : currentChat.type);
+avatarEl.innerHTML = isSaved ? '🔖' : getAvatarHTML(displayName, avatarPath);
+let nameHtml = escapeHtml(displayName);
+if (currentChat.type === 'private') {
+if (currentChat.other_verified) nameHtml += ' ' + getVerifiedBadge();
+if (currentChat.other_premium) nameHtml += ' ' + getVipBadge(true);
+} else if (currentChat.type === 'group' || currentChat.type === 'channel') {
+if (currentChat.verified) nameHtml += ' ' + getVerifiedBadge();
+}
+document.getElementById('chatName').innerHTML = (isSaved ? '' : typeIcon(currentChat.type)) + ' ' + nameHtml;
+const statusEl = document.getElementById('chatStatus');
+if (isSaved) {
+statusEl.textContent = 'فضای شخصی';
+} else if (currentChat.type === 'private') {
+statusEl.innerHTML = currentChat.other_online
+? '<span class="online-dot"></span> آنلاین'
+: 'آخرین بازدید: ' + (currentChat.other_last_seen_text || 'نامشخص');
+} else {
+const count = currentChat.online_members_count || 0;
+statusEl.innerHTML = count > 0 ? '<span class="online-dot"></span> ' + count + ' عضو آنلاین' : 'هیچ عضوی آنلاین نیست';
+}
+document.getElementById('membersBtn').style.display = (currentChat.type === 'group' || currentChat.type === 'channel') ? 'flex' : 'none';
+const info = document.getElementById('chatHeaderInfo');
+if (currentChat.type === 'private' && currentChat.other_user_id) {
+avatarEl.onclick = () => viewProfile(currentChat.other_user_id);
+info.onclick = () => viewProfile(currentChat.other_user_id);
+} else if (currentChat.type === 'group' || currentChat.type === 'channel') {
+avatarEl.onclick = () => openChatProfile();
+info.onclick = () => openChatProfile();
+} else {
+avatarEl.onclick = null;
+info.onclick = null;
+}
+}
+function updatePinnedMessage(messages) {
+const pinnedMsg = messages.filter(m => m.is_pinned).pop();
+const pinnedEl = document.getElementById('pinnedMessage');
+if (pinnedMsg) {
+const text = pinnedMsg.file_path ? (pinnedMsg.caption || pinnedMsg.file_name || '📎 فایل') : (pinnedMsg.text || '');
+pinnedEl.innerHTML = '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:16px">📌</span><div style="flex:1;min-width:0"><div style="font-size:11px;color:var(--accent);font-weight:800">پیام سنجاق شده</div><div style="font-size:12.5px;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(text) + '</div></div></div>';
+pinnedEl.dataset.msgId = pinnedMsg.id;
+pinnedEl.style.display = 'block';
+} else {
+pinnedEl.style.display = 'none';
+}
+}
+function updateExistingMessageNode(m) {
+const existing = document.querySelector(`.message[data-id="${m.id}"]`);
+if (!existing) return false;
+const fresh = renderMessage(m);
+const temp = document.createElement('div');
+temp.innerHTML = fresh.trim();
+const newNode = temp.firstChild;
+if (!newNode) return false;
+existing.replaceWith(newNode);
+return true;
+}
+function renderMessages(messages, force = false) {
+const key = (messages || []).map(m => m.id + (m.edited ? 'e' : '') + (m.is_pinned ? 'p' : '') + JSON.stringify(m.reactions || {}) + (m.seen_by || []).join(',') + (m.message_color || '')).join('|');
+if (!force && key === lastRenderKey) return;
+lastRenderKey = key;
+lastMessageCount = messages.length;
+currentMessages = messages;
+const container = document.getElementById('messages');
+const q = document.getElementById('chatSearchInput')?.value.trim().toLowerCase();
+if (q) {
+const filtered = messages.filter(m => {
+const text = m.file_path ? (m.caption || m.file_name || '') : (m.text || '');
+return text.toLowerCase().includes(q) || (m.username || '').toLowerCase().includes(q);
+});
+container.innerHTML = filtered.map(renderMessage).join('');
+} else {
+const existingIds = new Set();
+container.querySelectorAll('.message[data-id]').forEach(n => existingIds.add(n.dataset.id));
+const incomingIds = new Set(messages.map(m => m.id));
+const newMessages = [];
+const toUpdate = [];
+for (const m of messages) {
+if (existingIds.has(m.id)) {
+toUpdate.push(m);
+} else {
+newMessages.push(m);
+}
+knownMessageIds.add(m.id);
+}
+for (const id of existingIds) {
+if (!incomingIds.has(id)) {
+const node = container.querySelector(`.message[data-id="${id}"]`);
+if (node) node.remove();
+}
+}
+for (const m of toUpdate) {
+updateExistingMessageNode(m);
+}
+if (newMessages.length > 0) {
+const wasAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
+const fragment = document.createDocumentFragment();
+for (const m of newMessages) {
+const temp = document.createElement('div');
+temp.innerHTML = renderMessage(m).trim();
+const node = temp.firstChild;
+if (node) {
+node.classList.add('flash');
+fragment.appendChild(node);
+}
+}
+container.appendChild(fragment);
+if (wasAtBottom || force) {
+requestAnimationFrame(() => {
+container.scrollTop = container.scrollHeight;
+});
+}
+}
+}
+updatePinnedMessage(messages);
+}
+function renderMessage(m) {
+const isMe = m.user_id === currentUser.id;
+const isSaved = currentChat?.type === 'saved';
+const members = currentChat?.members || [];
+let fileHtml = '';
+if (m.file_path) {
+const fileUrl = escapeHtml(resolveFileUrl(m.file_path));
+if (m.file_type === 'image') {
+fileHtml = '<div class="message-file"><img src="' + fileUrl + '" alt="" style="cursor:pointer" onclick="window.open(this.src,\'_blank\')" onerror="imgError(this)"></div>';
+} else if (m.file_type === 'video') {
+fileHtml = '<div class="message-file"><video src="' + fileUrl + '" controls preload="metadata" playsinline></video></div>';
+} else {
+fileHtml = '<div class="message-file"><a class="file-chip" href="' + fileUrl + '" target="_blank">📄 ' + escapeHtml(m.file_name || 'فایل') + '</a></div>';
+}
+}
+const text = m.file_path ? (m.caption || '') : (m.text || '');
+const msgColor = m.message_color || '';
+const textStyle = msgColor ? ' style="color:' + escapeHtml(msgColor) + '"' : '';
+const textHtml = text ? '<div class="message-text"' + textStyle + '>' + linkify(text) + '</div>' : '';
+const canDelete = isMe || currentUser.is_admin || (currentChat && currentChat.owner_id === currentUser.id);
+const seen = (m.seen_by || []).some(id => id !== currentUser.id && members.includes(id));
+const tickHtml = isMe && !isSaved
+? '<span class="ticks ' + (seen ? 'seen' : '') + '">' + (seen ? '✔✔' : '✔') + '</span>'
+: '';
+let senderHtml = '';
+if (!isMe && currentChat && currentChat.type !== 'private' && !isSaved) {
+const senderNameColor = m.sender_premium_color || '';
+const styleAttr = senderNameColor ? ' style="color:' + escapeHtml(senderNameColor) + '"' : '';
+let senderBadges = '';
+if (m.sender_verified) senderBadges += ' ' + getVerifiedBadge();
+if (m.sender_premium) senderBadges += ' ' + getVipBadge(true);
+senderHtml = '<div class="msg-sender" onclick="viewProfile(\'' + m.user_id + '\')"><span' + styleAttr + '>' + escapeHtml(m.username || '') + '</span>' + senderBadges + '</div>';
+}
+const actions = [];
+if (!isSaved) actions.push('<button type="button" class="msg-action-inline" onclick="saveMessage(\'' + m.id + '\')">🔖 ذخیره</button>');
+actions.push('<button type="button" class="msg-action-inline" onclick="setReply(\'' + m.id + '\')">↩️ پاسخ</button>');
+actions.push('<button type="button" class="msg-action-inline" onclick="togglePin(\'' + m.id + '\')">📌 ' + (m.is_pinned ? 'برداشتن' : 'سنجاق') + '</button>');
+actions.push('<button type="button" class="msg-action-inline" onclick="toggleReactionPicker(\'' + m.id + '\', this)">😊</button>');
+actions.push('<button type="button" class="msg-action-inline" onclick="copyMessageText(\'' + m.id + '\')">📋</button>');
+actions.push('<button type="button" class="msg-action-inline" onclick="openForwardModal(\'' + m.id + '\')">↪️</button>');
+if (isMe) actions.push('<button type="button" class="msg-action-inline" onclick="editMessage(\'' + m.id + '\')">✏️ ویرایش</button>');
+if (canDelete) actions.push('<button type="button" class="msg-action-inline danger" onclick="deleteMessage(\'' + m.id + '\')">🗑️ حذف</button>');
+const savedFromHtml = (isSaved && m.saved_from) ? '<div class="saved-from">🔖 ذخیره‌شده از: ' + escapeHtml(m.saved_from) + '</div>' : '';
+const forwardedFromHtml = m.forwarded_from ? '<div class="saved-from">↪️ فوروارد شده از: ' + escapeHtml(m.forwarded_from) + '</div>' : '';
+const reactionsHtml = renderReactions(m);
+let replyHtml = '';
+if (m.reply_to) {
+replyHtml = '<div style="border-right:3px solid var(--accent);padding:5px 10px;margin-bottom:6px;background:rgba(255,255,255,.05);border-radius:8px;cursor:pointer" onclick="scrollToMessage(\'' + m.reply_to.id + '\')"><div style="font-size:11px;font-weight:800;color:var(--accent);margin-bottom:2px">' + escapeHtml(m.reply_to.username || 'کاربر') + '</div><div style="font-size:12px;color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(m.reply_to.text || '') + '</div></div>';
+}
+return `
+<div class="message ${isMe ? 'me' : 'other'}" data-id="${m.id}">
+${savedFromHtml}
+${forwardedFromHtml}
+${senderHtml}
+${replyHtml}
+${fileHtml}
+${textHtml}
+${reactionsHtml}
+<div class="message-meta">
+${m.edited ? '<span>ویرایش شده</span>' : ''}
+${tickHtml}
+<span>${formatTime(m.created_at)}</span>
+</div>
+${actions.length ? '<div class="message-actions-inline">' + actions.join('') + '</div>' : ''}
+</div>
+`;
+}
+function renderReactions(m) {
+const reactions = m.reactions || {};
+const entries = Object.entries(reactions);
+if (!entries.length) return '';
+let html = '<div class="message-reactions">';
+entries.forEach(([emoji, userIds]) => {
+const isActive = userIds.includes(currentUser.id);
+html += `<span class="reaction-chip ${isActive ? 'active' : ''}" onclick="reactToMessage('${m.id}', '${emoji}')">${emoji} ${userIds.length}</span>`;
+});
+html += '</div>';
+return html;
+}
+function toggleReactionPicker(msgId, btn) {
+let picker = document.getElementById('reactionPicker-' + msgId);
+if (!picker) {
+picker = document.createElement('div');
+picker.id = 'reactionPicker-' + msgId;
+picker.className = 'reaction-picker';
+const emojis = ['👍','❤️','😂','😮','😢','🔥','🎉','👏','🤔','😍'];
+picker.innerHTML = emojis.map(e => `<button type="button" onclick="reactToMessage('${msgId}', '${e}')">${e}</button>`).join('');
+btn.parentElement.appendChild(picker);
+}
+const isActive = picker.classList.contains('active');
+document.querySelectorAll('.reaction-picker.active').forEach(p => p.classList.remove('active'));
+if (!isActive) picker.classList.add('active');
+}
+function closeReactionPickers() {
+document.querySelectorAll('.reaction-picker.active').forEach(p => p.classList.remove('active'));
+}
+async function reactToMessage(msgId, emoji) {
+const formData = new FormData();
+formData.append('message_id', msgId);
+formData.append('emoji', emoji);
+try {
+const res = await fetch('?action=react_to_message', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) { showToast(data.error); return; }
+closeReactionPickers();
+refreshMessages();
+} catch (e) { showToast('خطا در ثبت واکنش'); }
+}
+function copyMessageText(msgId) {
+const msg = currentMessages.find(m => m.id === msgId);
+if (!msg) return;
+const text = msg.file_path ? (msg.caption || '') : (msg.text || '');
+if (!text) { showToast('متنی برای کپی وجود ندارد'); return; }
+navigator.clipboard.writeText(text).then(() => {
+showToast('متن کپی شد');
+}).catch(() => {
+showToast('خطا در کپی کردن');
+});
+}
+function openForwardModal(msgId) {
+forwardTargetMsg = currentMessages.find(m => m.id === msgId);
+if (!forwardTargetMsg) return;
+document.getElementById('forwardSearch').value = '';
+renderForwardChats();
+openModal('forwardModal');
+}
+function renderForwardChats() {
+const q = document.getElementById('forwardSearch').value.trim().toLowerCase();
+const list = document.getElementById('forwardChatsList');
+const filtered = q ? chats.filter(c => (c.display_name || c.name || '').toLowerCase().includes(q) && c.type !== 'saved') : chats.filter(c => c.type !== 'saved');
+if (!filtered.length) {
+list.innerHTML = '<div style="padding:16px;text-align:center;color:var(--t2);font-size:13px">چتی یافت نشد</div>';
+return;
+}
+list.innerHTML = filtered.map(c => {
+const avatarPath = c.type === 'private' ? (c.avatar_path || '') : (c.avatar_image || '');
+const avatarHtml = c.type === 'saved' ? '🔖' : getAvatarHTML(c.display_name || c.name, avatarPath);
+const displayName = c.display_name || c.name || 'چت';
+const meta = c.type === 'private' ? '@' + escapeHtml(c.other_username || '') : (c.type === 'channel' ? '📣 کانال' : '👥 گروه');
+return `
+<label class="user-option" onclick="submitForward('${c.id}')">
+<div class="user-option-avatar">${avatarHtml}</div>
+<div class="user-option-info">
+<div class="user-option-name">${escapeHtml(displayName)}</div>
+<div class="user-option-username">${meta}</div>
+</div>
+</label>
+`;
+}).join('');
+}
+async function submitForward(chatId) {
+if (!forwardTargetMsg) return;
+const formData = new FormData();
+formData.append('chat_id', chatId);
+formData.append('message_id', forwardTargetMsg.id);
+try {
+const res = await fetch('?action=forward_message', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) { showToast(data.error); return; }
+showToast('پیام فوروارد شد');
+closeModal('forwardModal');
+await loadChats();
+if (currentChat && currentChat.id === chatId) {
+await refreshMessages();
+}
+} catch (e) { showToast('خطا در فوروارد'); }
+}
+function imgError(img) {
+const a = document.createElement('a');
+a.className = 'file-chip';
+a.href = img.src;
+a.target = '_blank';
+a.textContent = '📎 مشاهده فایل';
+img.replaceWith(a);
+}
+async function markChatRead(chatId) {
+try {
+const formData = new FormData();
+formData.append('chat_id', chatId);
+await fetch('?action=mark_chat_read', {method: 'POST', body: formData});
+const c = chats.find(x => x.id === chatId);
+if (c) {
+c.unread_count = 0;
+renderChats();
+updateTotalNotifBadge();
+}
+} catch (e) {}
+}
+async function refreshMessages(forceFull = false) {
+if (!currentChat) return;
+try {
+const res = await fetch('?action=get_messages&chat_id=' + encodeURIComponent(currentChat.id), {cache: 'no-store'});
+const data = await res.json();
+if (data.error) return;
+currentChat = {...currentChat, ...data.chat};
+renderChatHeader();
+renderMessages(data.messages || [], forceFull);
+updateInputState();
+} catch (e) {}
+}
+async function sendMessage() {
+const input = document.getElementById('messageInput');
+const text = input.value.trim();
+if (!text || !currentChat) return;
+const formData = new FormData();
+formData.append('chat_id', currentChat.id);
+formData.append('text', text);
+if (currentUser.premium && selectedMsgColor) {
+formData.append('message_color', selectedMsgColor);
+}
+if (replyingTo) {
+formData.append('reply_to_id', replyingTo.id);
+cancelReply();
+}
+input.value = '';
+input.style.height = 'auto';
+saveDraft(currentChat.id, '');
+try {
+const res = await fetch('?action=send_message', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
+}
+await refreshMessages();
+await loadChats();
+} catch (e) {
+showToast('خطا در ارسال پیام');
+}
+}
+function openAttachmentModal(file, type) {
+const maxMb = currentUser.premium ? PREMIUM_MAX_UPLOAD_MB : NORMAL_MAX_UPLOAD_MB;
+const maxBytes = maxMb * 1024 * 1024;
+if (file.size > maxBytes) {
+showToast('حجم فایل بیشتر از ' + maxMb + ' مگابایت است' + (currentUser.premium ? '' : ' (پرمیوم: ' + PREMIUM_MAX_UPLOAD_MB + 'MB)'));
+return;
+}
+pendingFile = file;
+const preview = document.getElementById('attachPreview');
+const meta = document.getElementById('attachMeta');
+const title = document.getElementById('attachModalTitle');
+const icon = document.getElementById('attachIcon');
+preview.innerHTML = '';
+meta.innerHTML = '📄 ' + escapeHtml(file.name) + ' • ' + formatBytes(file.size);
+if (type === 'image') { title.textContent = 'ارسال تصویر'; icon.textContent = '🖼️'; }
+else if (type === 'video') { title.textContent = 'ارسال ویدیو'; icon.textContent = '🎬'; }
+else { title.textContent = 'ارسال فایل'; icon.textContent = '📄'; }
+if (pendingObjectUrl) {
+URL.revokeObjectURL(pendingObjectUrl);
+pendingObjectUrl = null;
+}
+if (file.type.startsWith('image/')) {
+pendingObjectUrl = URL.createObjectURL(file);
+preview.innerHTML = '<img src="' + pendingObjectUrl + '" alt="">';
+} else if (file.type.startsWith('video/')) {
+pendingObjectUrl = URL.createObjectURL(file);
+preview.innerHTML = '<video src="' + pendingObjectUrl + '" controls playsinline></video>';
+} else {
+preview.innerHTML = '<div style="text-align:center"><div style="font-size:52px">📄</div><div style="font-size:13px;margin-top:10px">' + escapeHtml(file.name) + '</div></div>';
+}
+document.getElementById('attachCaption').value = '';
+openModal('attachModal');
+}
+function cancelAttachment() {
+pendingFile = null;
+if (pendingObjectUrl) { URL.revokeObjectURL(pendingObjectUrl); pendingObjectUrl = null; }
+document.getElementById('attachPreview').innerHTML = '';
+document.getElementById('attachMeta').textContent = '';
+document.getElementById('attachCaption').value = '';
+closeModal('attachModal');
+}
+async function sendAttachment() {
+if (!pendingFile || !currentChat) return;
+const caption = document.getElementById('attachCaption').value.trim();
+const formData = new FormData();
+formData.append('chat_id', currentChat.id);
+formData.append('caption', caption);
+formData.append('file', pendingFile);
+saveDraft(currentChat.id, '');
+try {
+const res = await fetch('?action=send_message', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
+}
+cancelAttachment();
+await refreshMessages();
+await loadChats();
+} catch (e) {
+showToast('خطا در ارسال فایل');
+}
+}
+async function editMessage(msgId) {
+const msg = currentMessages.find(m => m.id === msgId);
+if (!msg) return;
+const currentText = msg.file_path ? (msg.caption || '') : (msg.text || '');
+const newText = prompt('ویرایش پیام:', currentText);
+if (newText === null || newText === currentText) return;
+const formData = new FormData();
+formData.append('message_id', msgId);
+formData.append('text', newText);
+const res = await fetch('?action=edit_message', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
+}
+refreshMessages();
+}
+async function deleteMessage(msgId) {
+if (!confirm('این پیام حذف شود؟')) return;
+const formData = new FormData();
+formData.append('message_id', msgId);
+const res = await fetch('?action=delete_message', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
+}
+knownMessageIds.delete(msgId);
+refreshMessages();
+}
+async function saveMessage(msgId) {
+const formData = new FormData();
+formData.append('message_id', msgId);
+try {
+const res = await fetch('?action=save_message', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
+}
+showToast('در پیام‌های ذخیره‌شده ذخیره شد');
+await loadChats();
+if (currentChat && currentChat.type === 'saved') refreshMessages();
+} catch (e) {
+showToast('خطا در ذخیره پیام');
+}
+}
+function setReply(msgId) {
+const msg = currentMessages.find(m => m.id === msgId);
+if (!msg) return;
+replyingTo = msg;
+const replyBox = document.getElementById('replyPreview');
+const text = msg.file_path ? (msg.caption || msg.file_name || '📎 فایل') : (msg.text || '');
+replyBox.innerHTML = '<div style="border-right:3px solid var(--accent);padding:6px 12px;background:var(--input);border-radius:10px;display:flex;justify-content:space-between;align-items:center;gap:10px"><div style="min-width:0;flex:1"><div style="font-size:12px;font-weight:800;color:var(--accent);margin-bottom:2px">' + escapeHtml(msg.username || 'کاربر') + '</div><div style="font-size:12.5px;color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(text) + '</div></div><button class="icon-btn" onclick="cancelReply()" style="width:28px;height:28px;font-size:14px">✖️</button></div>';
+replyBox.style.display = 'block';
+document.getElementById('messageInput').focus();
+}
+function cancelReply() {
+replyingTo = null;
+document.getElementById('replyPreview').style.display = 'none';
+document.getElementById('replyPreview').innerHTML = '';
+}
+function scrollToMessage(msgId) {
+const el = document.querySelector('.message[data-id="' + msgId + '"]');
+if (el) {
+el.scrollIntoView({behavior:'smooth', block:'center'});
+el.style.transition = 'background 0.5s';
+const origBg = el.style.background;
+el.style.background = 'rgba(61,219,196,0.3)';
+setTimeout(() => { el.style.background = origBg; }, 1500);
+}
+}
+async function togglePin(msgId) {
+const formData = new FormData();
+formData.append('message_id', msgId);
+try {
+const res = await fetch('?action=toggle_pin_message', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) { showToast(data.error); return; }
+refreshMessages();
+} catch (e) { showToast('خطا در سنجاق کردن'); }
+}
+function toggleChatSearch() {
+const bar = document.getElementById('chatSearchBar');
+const input = document.getElementById('chatSearchInput');
+if (bar.style.display === 'none' || !bar.style.display) {
+bar.style.display = 'block';
+input.focus();
+} else {
+bar.style.display = 'none';
+input.value = '';
+filterChatMessages();
+}
+}
+function filterChatMessages() {
+const q = document.getElementById('chatSearchInput').value.trim().toLowerCase();
+const container = document.getElementById('messages');
+if (!q) {
+renderMessages(currentMessages, true);
+return;
+}
+const filtered = currentMessages.filter(m => {
+const text = m.file_path ? (m.caption || m.file_name || '') : (m.text || '');
+return text.toLowerCase().includes(q) || (m.username || '').toLowerCase().includes(q);
+});
+container.innerHTML = filtered.map(renderMessage).join('');
+}
+async function clearChat() {
+if (!confirm('تمام پیام‌های این چت حذف شوند؟ این عمل قابل بازگشت نیست.')) return;
+const formData = new FormData();
+formData.append('chat_id', currentChat.id);
+try {
+const res = await fetch('?action=clear_chat', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) { showToast(data.error); return; }
+showToast('تاریخچه چت پاک شد');
+closeModal('chatMenuModal');
+knownMessageIds = new Set();
+lastRenderKey = '';
+lastMessageCount = 0;
+await refreshMessages(true);
+await loadChats();
+} catch (e) { showToast('خطا در پاک کردن چت'); }
+}
+function exportChat() {
+if (!currentMessages.length) { showToast('پیامی برای خروجی گرفتن وجود ندارد'); return; }
+let text = 'تاریخچه چت: ' + (currentChat.display_name || currentChat.name) + '\n';
+text += 'تاریخ خروجی: ' + new Date().toLocaleString('fa-IR') + '\n';
+text += '========================================\n\n';
+currentMessages.forEach(m => {
+const time = new Date(m.created_at * 1000).toLocaleString('fa-IR');
+const sender = m.username || 'کاربر';
+const content = m.file_path ? (m.caption ? '[فایل] ' + m.caption : '[فایل: ' + (m.file_name || 'فایل') + ']') : (m.text || '');
+text += '[' + time + '] ' + sender + ':\n' + content + '\n\n';
+});
+const blob = new Blob([text], {type: 'text/plain;charset=utf-8'});
+const url = URL.createObjectURL(blob);
+const a = document.createElement('a');
+a.href = url;
+a.download = 'chat_' + currentChat.id + '_' + Date.now() + '.txt';
+document.body.appendChild(a);
+a.click();
+document.body.removeChild(a);
+URL.revokeObjectURL(url);
+showToast('خروجی با موفقیت دانلود شد');
+}
+async function loadUsers() {
+const res = await fetch('?action=get_users');
+const data = await res.json();
+renderUsers(data.users || []);
+}
+function renderUsers(users) {
+users.forEach(u => selectedMembersData[u.id] = u);
+const list = document.getElementById('usersList');
+if (!users.length) {
+list.innerHTML = '<div style="padding:16px;text-align:center;color:var(--t2);font-size:13px">کاربری یافت نشد</div>';
+return;
+}
+const single = currentCreateType === 'private';
+list.innerHTML = users.map(u => {
+const avatarHtml = u.avatar ? '<img src="' + escapeHtml(resolveFileUrl(u.avatar)) + '" alt="">' : escapeHtml((u.name || u.username || '?')[0].toUpperCase());
+const badges = badgesHtml(u);
+return `
+<label class="user-option">
+<input type="${single ? 'radio' : 'checkbox'}" name="memberPick" value="${u.id}" onchange="updateSelectedMembers()" ${selectedMembers.includes(u.id) ? 'checked' : ''}>
+<div class="user-option-avatar">${avatarHtml}</div>
+<div class="user-option-info">
+<div class="user-option-name">${escapeHtml(u.name || u.username)}${badges}</div>
+<div class="user-option-username">@${escapeHtml(u.username)}</div>
+</div>
+</label>
+`;
+}).join('');
+}
+function updateSelectedMembers() {
+const checked = Array.from(document.querySelectorAll('#usersList input:checked'));
+selectedMembers = checked.map(i => i.value);
+renderSelectedChips();
+}
+function renderSelectedChips() {
+const box = document.getElementById('selectedChips');
+if (!selectedMembers.length) { box.innerHTML = ''; return; }
+box.innerHTML = selectedMembers.map(id => {
+const u = selectedMembersData[id] || {name: 'کاربر'};
+return '<span class="member-chip">' + escapeHtml(u.name || u.username || 'کاربر') + '<button type="button" onclick="event.preventDefault();removeMember(\'' + id + '\')">✖️</button></span>';
+}).join('');
+}
+function removeMember(id) {
+selectedMembers = selectedMembers.filter(m => m !== id);
+renderSelectedChips();
+const cb = document.querySelector('#usersList input[value="' + id + '"]');
+if (cb) cb.checked = false;
+}
+let searchTimeout = null;
+function searchUsers() {
+clearTimeout(searchTimeout);
+const q = document.getElementById('userSearch').value.trim();
+if (!q) { loadUsers(); return; }
+searchTimeout = setTimeout(async () => {
+const res = await fetch('?action=search_users&q=' + encodeURIComponent(q));
+const data = await res.json();
+renderUsers(data.users || []);
+}, 300);
+}
+function createChat(type) {
+currentCreateType = type;
+closeFab();
+openModal('newChatModal');
+const isPrivate = type === 'private';
+document.getElementById('newChatTitle').textContent = {
+private: 'پیام خصوصی جدید',
+group: 'ایجاد گروه جدید',
+channel: 'ایجاد کانال جدید'
+}[type];
+document.getElementById('chatNameField').style.display = isPrivate ? 'none' : 'block';
+document.getElementById('chatDescField').style.display = isPrivate ? 'none' : 'block';
+document.getElementById('newChatName').value = '';
+document.getElementById('newChatDesc').value = '';
+selectedMembers = [];
+selectedMembersData = {};
+renderSelectedChips();
+loadUsers();
+}
+async function submitCreateChat() {
+const type = currentCreateType;
+const formData = new FormData();
+formData.append('type', type);
+if (type !== 'private') {
+const name = document.getElementById('newChatName').value.trim();
+if (!name) { showToast('نام الزامی است'); return; }
+formData.append('name', name);
+formData.append('description', document.getElementById('newChatDesc').value);
+} else {
+if (!selectedMembers.length) { showToast('یک کاربر انتخاب کنید'); return; }
+}
+selectedMembers.forEach(m => formData.append('members[]', m));
+try {
+const res = await fetch('?action=create_chat', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
+}
+closeModal('newChatModal');
+selectedMembers = [];
+selectedMembersData = {};
+await loadChats(true);
+if (data.chat) openChat(data.chat.id);
+} catch (e) {
+showToast('خطا در ایجاد چت');
+}
+}
+async function openSavedChat() {
+let chat = chats.find(c => c.type === 'saved');
+if (!chat) { await loadChats(true); chat = chats.find(c => c.type === 'saved'); }
+if (chat) openChat(chat.id);
+else showToast('خطا در یافتن پیام‌های ذخیره‌شده');
+}
 function openChatMenu() {
-    if (!currentChat) return;
-    document.getElementById('menuTitle').textContent = currentChat.display_name || currentChat.name || 'چت';
-    const isOwner = currentChat.owner_id === currentUser.id;
-    const isPrivate = currentChat.type === 'private';
-    let html = '<div style="display:flex;flex-direction:column;gap:8px">';
-    if (!isPrivate && (isOwner || currentUser.is_admin)) {
-        html += `<button class="btn btn-primary" onclick="openEditChat()">✏️ ویرایش و تنظیم آیدی عمومی</button>`;
-    }
-    if (!isPrivate && currentChat.public_id) {
-        const link = `${window.location.origin}/index.php?join=${encodeURIComponent(currentChat.public_id)}`;
-        html += `<div style="margin-top:8px"><label style="font-size:13px;color:var(--text-secondary)">🔗 لینک عضویت:</label><div class="link-box"><input type="text" id="inviteLink" value="${escapeHtml(link)}" readonly><button class="copy-btn" onclick="copyLink()">کپی</button></div></div>`;
-    }
-    html += `<button class="btn btn-secondary" onclick="leaveChat()">🚪 ${isPrivate ? 'بستن چت' : 'خروج از ' + (currentChat.type === 'channel' ? 'کانال' : 'گروه')}</button>`;
-    if (!isPrivate && (isOwner || currentUser.is_admin)) {
-        html += `<button class="btn btn-danger" onclick="deleteChat()">🗑️ حذف ${currentChat.type === 'channel' ? 'کانال' : 'گروه'}</button>`;
-    }
-    html += '</div>';
-    document.getElementById('chatMenuContent').innerHTML = html;
-    document.getElementById('chatMenuModal').classList.add('active');
+if (!currentChat || currentChat.type === 'saved') return;
+document.getElementById('menuTitle').textContent = currentChat.display_name || currentChat.name || 'چت';
+const isOwner = currentChat.owner_id === currentUser.id;
+const isPrivate = currentChat.type === 'private';
+const canManage = isOwner || currentUser.is_admin;
+let html = '<div class="menu-rows">';
+html += '<button class="menu-row" onclick="toggleChatSearch();closeModal(\'chatMenuModal\')">🔍 جستجو در پیام‌ها</button>';
+html += '<button class="menu-row" onclick="exportChat();closeModal(\'chatMenuModal\')">📥 خروجی گرفتن از چت</button>';
+html += '<button class="menu-row danger" onclick="clearChat()">🧹 پاک کردن تاریخچه چت</button>';
+if (!isPrivate && canManage) {
+html += '<button class="menu-row" onclick="openEditChat()">✏️ ویرایش چت</button>';
+html += '<button class="menu-row" onclick="openAddMembersModal()">➕ افزودن عضو</button>';
+html += '<button class="menu-row danger" onclick="deleteChat()">🗑️ حذف کامل ' + (currentChat.type === 'channel' ? 'کانال' : 'گروه') + '</button>';
 }
-
+if (isPrivate || !canManage) {
+html += '<button class="menu-row" onclick="leaveChat()">🚪 ' + (isPrivate ? 'بستن چت خصوصی' : 'خروج از ' + (currentChat.type === 'channel' ? 'کانال' : 'گروه')) + '</button>';
+}
+html += '</div>';
+document.getElementById('chatMenuContent').innerHTML = html;
+openModal('chatMenuModal');
+}
 function openEditChat() {
-    closeModal('chatMenuModal');
-    document.getElementById('editChatName').value = currentChat.name || '';
-    document.getElementById('editChatDesc').value = currentChat.description || '';
-    document.getElementById('editPublicId').value = currentChat.public_id || '';
-
-    editChatAvatarPath = currentChat.avatar_image || '';
-    updateEditChatAvatarUI();
-
-    document.getElementById('editChatModal').classList.add('active');
+closeModal('chatMenuModal');
+document.getElementById('editChatName').value = currentChat.name || '';
+document.getElementById('editChatDesc').value = currentChat.description || '';
+updateEditChatAvatarUI();
+openModal('editChatModal');
 }
-
 function updateEditChatAvatarUI() {
-    const avatarEl = document.getElementById('editChatAvatar');
-    const textEl = document.getElementById('editChatAvatarText');
-    if (editChatAvatarPath) {
-        avatarEl.innerHTML = `<img src="${escapeHtml(editChatAvatarPath)}" alt=""><div class="avatar-upload-overlay">📷</div>`;
-    } else {
-        const displayName = currentChat.name || '?';
-        textEl.textContent = displayName[0].toUpperCase();
-        avatarEl.innerHTML = `<span id="editChatAvatarText">${escapeHtml(displayName[0].toUpperCase())}</span><div class="avatar-upload-overlay">📷</div>`;
-    }
+const avatarEl = document.getElementById('editChatAvatar');
+const avatarPath = currentChat.avatar_image || '';
+if (avatarPath) {
+avatarEl.innerHTML = '<img src="' + escapeHtml(resolveFileUrl(avatarPath)) + '" alt=""><div class="avatar-upload-overlay">📷</div>';
+} else {
+avatarEl.innerHTML = '<span>' + escapeHtml((currentChat.name || '?')[0].toUpperCase()) + '</span><div class="avatar-upload-overlay">📷</div>';
 }
-
+}
 async function uploadChatAvatar(input) {
-    if (!input.files || !input.files[0] || !currentChat) return;
-    const formData = new FormData();
-    formData.append('chat_id', currentChat.id);
-    formData.append('avatar', input.files[0]);
-    try {
-        const res = await fetch('?action=upload_chat_avatar', { method: 'POST', body: formData });
-        const data = await res.json();
-        if (data.error) { showToast(data.error); input.value = ''; return; }
-        editChatAvatarPath = data.avatar;
-        updateEditChatAvatarUI();
-        showToast('عکس آپلود شد');
-    } catch (e) {
-        showToast('خطا در آپلود');
-    }
-    input.value = '';
+if (!input.files || !input.files[0] || !currentChat) return;
+const formData = new FormData();
+formData.append('chat_id', currentChat.id);
+formData.append('avatar', input.files[0]);
+try {
+const res = await fetch('?action=upload_chat_avatar', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+input.value = '';
+return;
 }
-
+currentChat.avatar_image = data.avatar;
+updateEditChatAvatarUI();
+renderChatHeader();
+showToast('عکس آپلود شد');
+} catch (e) {
+showToast('خطا در آپلود');
+}
+input.value = '';
+}
 async function removeChatAvatar() {
-    if (!currentChat) return;
-    if (!confirm('عکس چت حذف شود؟')) return;
-    const formData = new FormData();
-    formData.append('chat_id', currentChat.id);
-    try {
-        const res = await fetch('?action=remove_chat_avatar', { method: 'POST', body: formData });
-        const data = await res.json();
-        if (data.error) { showToast(data.error); return; }
-        editChatAvatarPath = '';
-        updateEditChatAvatarUI();
-        showToast('عکس حذف شد');
-    } catch (e) {
-        showToast('خطا');
-    }
+if (!currentChat) return;
+if (!confirm('عکس چت حذف شود؟')) return;
+const formData = new FormData();
+formData.append('chat_id', currentChat.id);
+try {
+const res = await fetch('?action=remove_chat_avatar', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
 }
-
+currentChat.avatar_image = '';
+updateEditChatAvatarUI();
+renderChatHeader();
+showToast('عکس حذف شد');
+} catch (e) {
+showToast('خطا');
+}
+}
 async function saveChatEdit() {
-    const formData = new FormData();
-    formData.append('chat_id', currentChat.id);
-    formData.append('name', document.getElementById('editChatName').value);
-    formData.append('description', document.getElementById('editChatDesc').value);
-    formData.append('public_id', document.getElementById('editPublicId').value);
-    const res = await fetch('?action=update_chat', { method: 'POST', body: formData });
-    const data = await res.json();
-    if (data.error) { showToast(data.error); return; }
-    closeModal('editChatModal');
-    showToast('ذخیره شد');
-    await loadChats();
-    openChat(currentChat.id);
+const formData = new FormData();
+formData.append('chat_id', currentChat.id);
+formData.append('name', document.getElementById('editChatName').value);
+formData.append('description', document.getElementById('editChatDesc').value);
+const res = await fetch('?action=update_chat', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
 }
-
+currentChat.name = document.getElementById('editChatName').value;
+currentChat.description = document.getElementById('editChatDesc').value;
+currentChat.display_name = currentChat.name;
+closeModal('editChatModal');
+showToast('ذخیره شد');
+await loadChats();
+renderChatHeader();
+}
 async function leaveChat() {
-    if (!confirm('مطمئن هستید؟')) return;
-    const formData = new FormData();
-    formData.append('chat_id', currentChat.id);
-    const res = await fetch('?action=leave_chat', { method: 'POST', body: formData });
-    const data = await res.json();
-    if (data.error) { showToast(data.error); return; }
-    closeModal('chatMenuModal');
-    closeChat();
-    await loadChats();
+if (!confirm('مطمئن هستید؟')) return;
+const formData = new FormData();
+formData.append('chat_id', currentChat.id);
+const res = await fetch('?action=leave_chat', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
 }
-
+closeModal('chatMenuModal');
+closeChat();
+await loadChats(true);
+}
 async function deleteChat() {
-    if (!confirm('این چت به طور کامل حذف شود؟ این عمل قابل بازگشت نیست.')) return;
-    const formData = new FormData();
-    formData.append('chat_id', currentChat.id);
-    const res = await fetch('?action=delete_chat', { method: 'POST', body: formData });
-    const data = await res.json();
-    if (data.error) { showToast(data.error); return; }
-    closeModal('chatMenuModal');
-    closeChat();
-    showToast('حذف شد');
-    await loadChats();
+if (!confirm('این چت به طور کامل حذف شود؟ این عمل قابل بازگشت نیست.')) return;
+const formData = new FormData();
+formData.append('chat_id', currentChat.id);
+const res = await fetch('?action=delete_chat', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
 }
-
-function copyLink() {
-    const input = document.getElementById('inviteLink');
-    input.select();
-    input.setSelectionRange(0, 99999);
-    navigator.clipboard.writeText(input.value).then(() => showToast('لینک کپی شد')).catch(() => {
-        document.execCommand('copy');
-        showToast('لینک کپی شد');
-    });
+closeModal('chatMenuModal');
+closeChat();
+showToast('حذف شد');
+await loadChats(true);
 }
-
 async function logout() {
-    if (!confirm('خروج از حساب؟')) return;
-    const res = await fetch('?action=logout');
-    const data = await res.json();
-    window.location.href = data.redirect || 'index.php';
+if (!confirm('خروج از حساب؟')) return;
+const res = await fetch('?action=logout');
+const data = await res.json();
+window.location.href = data.redirect || 'index.php';
 }
-
+function updateMeAvatar(avatarPath) {
+const el = document.getElementById('meAvatar');
+if (avatarPath) {
+el.innerHTML = '<img src="' + escapeHtml(resolveFileUrl(avatarPath)) + '" alt="">';
+} else {
+el.innerHTML = escapeHtml((currentUser.name || currentUser.username || '?')[0].toUpperCase());
+}
+}
+function renderPremiumSection() {
+const section = document.getElementById('premiumSection');
+if (!currentUser.premium) {
+section.innerHTML = '';
+return;
+}
+const until = currentUser.premium_until;
+const daysLeft = currentUser.premium_days_left;
+const untilStr = formatDateTime(until);
+section.innerHTML = `
+<div class="premium-card">
+<div class="premium-card-content">
+<div class="premium-card-head">
+<span style="font-size:28px">⭐</span>
+<h4>اشتراک پرمیوم VIP فعال</h4>
+</div>
+<div class="premium-info-row">
+<span class="premium-info-label">📅 تاریخ انقضا</span>
+<span class="premium-info-value">${untilStr}</span>
+</div>
+<div class="premium-info-row">
+<span class="premium-info-label">⏳ روزهای باقیمانده</span>
+<span class="premium-info-value">${daysLeft} روز</span>
+</div>
+<div class="premium-info-row">
+<span class="premium-info-label">📦 حداکثر حجم فایل</span>
+<span class="premium-info-value">${PREMIUM_MAX_UPLOAD_MB} مگابایت</span>
+</div>
+<div class="premium-info-row">
+<span class="premium-info-label">📝 حداکثر طول بیو</span>
+<span class="premium-info-value">${PREMIUM_BIO_MAX} کاراکتر</span>
+</div>
+<div class="premium-info-row">
+<span class="premium-info-label">🎨 رنگ پیام</span>
+<span class="premium-info-value">فعال</span>
+</div>
+</div>
+</div>
+`;
+}
+function renderWalletSection() {
+const section = document.getElementById('walletSection');
+const balance = currentUser.wallet_balance || 0;
+const tomanValue = balance * spcToToman;
+section.innerHTML = `
+<div class="wallet-card">
+<div class="wallet-card-content">
+<div class="wallet-card-head">
+<span style="font-size:28px">💰</span>
+<h4>کیف پول SPC</h4>
+</div>
+<div class="wallet-balance">
+${formatNumber(balance)} <small>SPC</small>
+</div>
+<div class="wallet-toman">≈ ${formatToman(tomanValue)}</div>
+<div class="premium-info-row">
+<span class="premium-info-label">💱 نرخ تبدیل</span>
+<span class="premium-info-value">1 SPC = ${formatNumber(spcToToman)} تومان</span>
+</div>
+<div class="wallet-actions">
+<button class="btn btn-spc" onclick="openTransferModal()">💸 انتقال SPC</button>
+</div>
+</div>
+</div>
+`;
+}
+function openTransferModal() {
+document.getElementById('transferToUsername').value = '';
+document.getElementById('transferAmount').value = '';
+document.getElementById('transferPreview').style.display = 'none';
+const balance = currentUser.wallet_balance || 0;
+document.getElementById('transferWalletInfo').innerHTML = `
+<div style="padding:12px;background:var(--input);border-radius:12px;border:1px solid var(--border)">
+<div style="display:flex;justify-content:space-between"><span style="color:var(--t2);font-size:12px">موجودی شما:</span><strong style="color:var(--spc-green)">${formatNumber(balance)} SPC</strong></div>
+</div>
+`;
+openModal('transferModal');
+updateTransferPreview();
+}
+function updateTransferPreview() {
+const amount = parseInt(document.getElementById('transferAmount').value) || 0;
+const preview = document.getElementById('transferPreview');
+if (amount > 0) {
+document.getElementById('transferPreviewAmount').textContent = formatNumber(amount) + ' SPC';
+document.getElementById('transferPreviewToman').textContent = formatToman(amount * spcToToman);
+preview.style.display = 'block';
+} else {
+preview.style.display = 'none';
+}
+}
+async function submitTransfer() {
+const toUsername = document.getElementById('transferToUsername').value.trim().replace(/^@/, '');
+const amount = parseInt(document.getElementById('transferAmount').value) || 0;
+if (!toUsername) { showToast('نام کاربری مقصد را وارد کنید'); return; }
+if (amount <= 0) { showToast('مقدار باید بیشتر از صفر باشد'); return; }
+const formData = new FormData();
+formData.append('to_username', toUsername);
+formData.append('amount', amount);
+try {
+const res = await fetch('?action=transfer_spc', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
+}
+showToast(data.message);
+currentUser.wallet_balance = data.new_balance;
+closeModal('transferModal');
+renderWalletSection();
+} catch (e) {
+showToast('خطا در انتقال');
+}
+}
+document.getElementById('transferAmount')?.addEventListener('input', updateTransferPreview);
+function renderPremiumSettings() {
+if (!currentUser.premium) return '';
+const selectedColor = selectedPremiumColor || '';
+const colorOptions = ALLOWED_PREMIUM_COLORS.map(c => {
+const isSelected = c === selectedColor;
+const style = c ? `background:${c}` : 'background:var(--hover);color:var(--t1)';
+const label = c ? '' : '×';
+return `<div class="color-option ${isSelected ? 'selected' : ''}" style="${style}" onclick="selectPremiumColor('${c}')" title="${c ? c : 'بدون رنگ'}">${label}</div>`;
+}).join('');
+return `
+<div class="section-title vip">⭐ تنظیمات پرمیوم VIP</div>
+<div class="premium-feature-list">
+<div class="premium-feature">
+<span class="premium-feature-icon">🎨</span>
+<div class="premium-feature-text">
+<strong>رنگ نام کاربری</strong>
+<span>رنگی برای نمایش نام خود در پیام‌ها انتخاب کنید</span>
+</div>
+</div>
+<div style="padding:0 12px 8px">
+<div class="color-picker">${colorOptions}</div>
+</div>
+<div class="toggle-row" style="background:rgba(255,215,0,.06);border-color:rgba(255,215,0,.2)">
+<div style="flex:1">
+<div class="toggle-row-label">🔔 صدای پیام سفارشی</div>
+<div class="small-note">پخش صدای خاص هنگام دریافت پیام</div>
+</div>
+<label class="toggle-switch"><input type="checkbox" id="premiumSound" ${currentUser.premium_message_sound ? 'checked' : ''}><span class="toggle-slider"></span></label>
+</div>
+<div class="toggle-row" style="background:rgba(255,215,0,.06);border-color:rgba(255,215,0,.2)">
+<div style="flex:1">
+<div class="toggle-row-label">✨ انیمیشن آواتار</div>
+<div class="small-note">افکت درخشان برای عکس پروفایل شما</div>
+</div>
+<label class="toggle-switch"><input type="checkbox" id="premiumAnimAvatar" ${currentUser.premium_animated_avatar ? 'checked' : ''}><span class="toggle-slider"></span></label>
+</div>
+<div class="toggle-row" style="background:rgba(255,215,0,.06);border-color:rgba(255,215,0,.2)">
+<div style="flex:1">
+<div class="toggle-row-label">👻 مخفی کردن آخرین بازدید</div>
+<div class="small-note">دیگران زمان آخرین بازدید شما را نمی‌بینند (فقط "اخیراً" نمایش داده می‌شود)</div>
+</div>
+<label class="toggle-switch"><input type="checkbox" id="premiumHideLastSeen" ${currentUser.premium_hide_last_seen ? 'checked' : ''}><span class="toggle-slider"></span></label>
+</div>
+</div>
+`;
+}
+function selectPremiumColor(color) {
+selectedPremiumColor = color;
+const settingsHtml = renderPremiumSettings();
+const container = document.querySelector('#profileModal .modal');
+const existingSettings = container.querySelector('.premium-settings-container');
+if (existingSettings) {
+existingSettings.outerHTML = `<div class="premium-settings-container">${settingsHtml}</div>`;
+}
+}
+function updateBioCounter() {
+const bio = document.getElementById('profileBio').value;
+const counter = document.getElementById('bioCounter');
+const maxLen = currentUser.premium ? PREMIUM_BIO_MAX : NORMAL_BIO_MAX;
+const len = bio.length;
+counter.textContent = len + ' / ' + maxLen;
+counter.className = 'bio-counter';
+if (len > maxLen * 0.9) counter.classList.add('danger');
+else if (len > maxLen * 0.75) counter.classList.add('warn');
+}
 function openProfileModal() {
-    const u = currentUser;
-    const avatarEl = document.getElementById('profileAvatar');
-    if (u.avatar) {
-        avatarEl.innerHTML = `<img src="${escapeHtml(u.avatar)}" alt=""><div class="avatar-upload-overlay">📷</div>`;
-    } else {
-        avatarEl.innerHTML = `<span id="profileAvatarText">${escapeHtml((u.name || u.username || '?')[0].toUpperCase())}</span><div class="avatar-upload-overlay">📷</div>`;
-    }
-    document.getElementById('profileDisplayName').textContent = u.name || u.username;
-    document.getElementById('profileDisplayUsername').textContent = '@' + u.username;
-    document.getElementById('profileUsername').value = u.username || '';
-    document.getElementById('profileName').value = u.name || '';
-    document.getElementById('profileBio').value = u.bio || '';
-    document.getElementById('profileSearchable').checked = !!u.privacy_searchable;
-    document.getElementById('currentPassword').value = '';
-    document.getElementById('newPassword').value = '';
-    document.getElementById('confirmPassword').value = '';
-    updateNotifUI();
-    document.getElementById('profileModal').classList.add('active');
+const u = currentUser;
+selectedPremiumColor = u.premium_color || '';
+renderPremiumSection();
+renderWalletSection();
+const settingsContainer = document.querySelector('#profileModal .premium-settings-container');
+if (settingsContainer) settingsContainer.remove();
+const premiumSettingsHtml = renderPremiumSettings();
+if (premiumSettingsHtml) {
+const profileHeader = document.querySelector('#profileModal .profile-header');
+const container = document.createElement('div');
+container.className = 'premium-settings-container';
+container.innerHTML = premiumSettingsHtml;
+profileHeader.parentNode.insertBefore(container, profileHeader.nextSibling);
 }
-
+const avatarEl = document.getElementById('profileAvatar');
+if (u.avatar) {
+avatarEl.innerHTML = '<img src="' + escapeHtml(resolveFileUrl(u.avatar)) + '" alt=""><div class="avatar-upload-overlay">📷</div>';
+avatarEl.className = 'profile-avatar' + (u.premium && u.premium_animated_avatar ? ' premium-glow' : '');
+} else {
+avatarEl.innerHTML = '<span>' + escapeHtml((u.name || u.username || '?')[0].toUpperCase()) + '</span><div class="avatar-upload-overlay">📷</div>';
+avatarEl.className = 'profile-avatar' + (u.premium && u.premium_animated_avatar ? ' premium-glow' : '');
+}
+const displayNameEl = document.getElementById('profileDisplayName');
+displayNameEl.innerHTML = escapeHtml(u.name || u.username) + badgesHtml(u);
+document.getElementById('profileDisplayUsername').textContent = '@' + u.username;
+document.getElementById('profileUsername').value = u.username || '';
+document.getElementById('profileName').value = u.name || '';
+document.getElementById('profileBio').value = u.bio || '';
+document.getElementById('profileSearchable').checked = !!u.privacy_searchable;
+const bioMax = u.premium ? PREMIUM_BIO_MAX : NORMAL_BIO_MAX;
+document.getElementById('bioMaxLabel').textContent = '(حداکثر ' + bioMax + ' کاراکتر' + (u.premium ? ' ⭐' : '') + ')';
+document.getElementById('profileBio').maxLength = bioMax;
+updateBioCounter();
+document.getElementById('currentPassword').value = '';
+document.getElementById('newPassword').value = '';
+document.getElementById('confirmPassword').value = '';
+openModal('profileModal');
+}
 async function uploadUserAvatar(input) {
-    if (!input.files || !input.files[0]) return;
-    const formData = new FormData();
-    formData.append('avatar', input.files[0]);
-    try {
-        const res = await fetch('?action=upload_user_avatar', { method: 'POST', body: formData });
-        const data = await res.json();
-        if (data.error) { showToast(data.error); input.value = ''; return; }
-        currentUser.avatar = data.avatar;
-        openProfileModal();
-        showToast('عکس پروفایل آپلود شد');
-    } catch (e) {
-        showToast('خطا در آپلود');
-    }
-    input.value = '';
+if (!input.files || !input.files[0]) return;
+const formData = new FormData();
+formData.append('avatar', input.files[0]);
+try {
+const res = await fetch('?action=upload_user_avatar', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+input.value = '';
+return;
 }
-
+currentUser.avatar = data.avatar;
+updateMeAvatar(data.avatar);
+openProfileModal();
+showToast('عکس پروفایل آپلود شد');
+} catch (e) {
+showToast('خطا در آپلود');
+}
+input.value = '';
+}
 async function removeUserAvatar() {
-    if (!currentUser.avatar) {
-        showToast('عکسی برای حذف وجود ندارد');
-        return;
-    }
-    if (!confirm('عکس پروفایل حذف شود؟')) return;
-    try {
-        const res = await fetch('?action=remove_user_avatar', { method: 'POST' });
-        const data = await res.json();
-        if (data.error) { showToast(data.error); return; }
-        currentUser.avatar = '';
-        openProfileModal();
-        showToast('عکس حذف شد');
-    } catch (e) {
-        showToast('خطا');
-    }
+if (!currentUser.avatar) { showToast('عکسی برای حذف وجود ندارد'); return; }
+if (!confirm('عکس پروفایل حذف شود؟')) return;
+try {
+const res = await fetch('?action=remove_user_avatar', {method: 'POST'});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
 }
-
+currentUser.avatar = '';
+updateMeAvatar('');
+openProfileModal();
+showToast('عکس حذف شد');
+} catch (e) {
+showToast('خطا');
+}
+}
 async function saveProfile() {
-    const username = document.getElementById('profileUsername').value.trim();
-    const name = document.getElementById('profileName').value.trim();
-    const bio = document.getElementById('profileBio').value.trim();
-    const privacy_searchable = document.getElementById('profileSearchable').checked;
-    if (!username) { showToast('آیدی نمی‌تواند خالی باشد'); return; }
-    const formData = new FormData();
-    formData.append('username', username);
-    formData.append('name', name);
-    formData.append('bio', bio);
-    formData.append('privacy_searchable', privacy_searchable ? '1' : '');
-    const res = await fetch('?action=update_profile', { method: 'POST', body: formData });
-    const data = await res.json();
-    if (data.error) { showToast(data.error); return; }
-    currentUser.privacy_searchable = privacy_searchable;
-    showToast('پروفایل ذخیره شد');
-    setTimeout(() => window.location.reload(), 500);
+const username = document.getElementById('profileUsername').value.trim();
+const name = document.getElementById('profileName').value.trim();
+const bio = document.getElementById('profileBio').value.trim();
+const privacy_searchable = document.getElementById('profileSearchable').checked;
+const bioMax = currentUser.premium ? PREMIUM_BIO_MAX : NORMAL_BIO_MAX;
+if (!username) { showToast('آیدی نمی‌تواند خالی باشد'); return; }
+if (bio.length > bioMax) { showToast('طول بیو نمی‌تواند بیشتر از ' + bioMax + ' کاراکتر باشد'); return; }
+const formData = new FormData();
+formData.append('username', username);
+formData.append('name', name);
+formData.append('bio', bio);
+formData.append('privacy_searchable', privacy_searchable ? '1' : '');
+if (currentUser.premium) {
+formData.append('premium_color', selectedPremiumColor || '');
+const soundEl = document.getElementById('premiumSound');
+const animAvatarEl = document.getElementById('premiumAnimAvatar');
+const hideLastSeenEl = document.getElementById('premiumHideLastSeen');
+formData.append('premium_message_sound', soundEl && soundEl.checked ? '1' : '');
+formData.append('premium_animated_avatar', animAvatarEl && animAvatarEl.checked ? '1' : '');
+formData.append('premium_hide_last_seen', hideLastSeenEl && hideLastSeenEl.checked ? '1' : '');
 }
-
+const res = await fetch('?action=update_profile', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
+}
+showToast('پروفایل ذخیره شد');
+setTimeout(() => window.location.reload(), 500);
+}
 async function changePassword() {
-    const current_password = document.getElementById('currentPassword').value;
-    const new_password = document.getElementById('newPassword').value;
-    const confirm_password = document.getElementById('confirmPassword').value;
-    if (!current_password || !new_password) { showToast('فیلدهای رمز عبور را پر کنید'); return; }
-    if (new_password !== confirm_password) { showToast('رمز جدید و تکرار آن یکسان نیستند'); return; }
-    const formData = new FormData();
-    formData.append('current_password', current_password);
-    formData.append('new_password', new_password);
-    const res = await fetch('?action=change_password', { method: 'POST', body: formData });
-    const data = await res.json();
-    if (data.error) { showToast(data.error); return; }
-    showToast('رمز عبور تغییر کرد');
-    document.getElementById('currentPassword').value = '';
-    document.getElementById('newPassword').value = '';
-    document.getElementById('confirmPassword').value = '';
+const current_password = document.getElementById('currentPassword').value;
+const new_password = document.getElementById('newPassword').value;
+const confirm_password = document.getElementById('confirmPassword').value;
+if (!current_password || !new_password) { showToast('فیلدهای رمز عبور را پر کنید'); return; }
+if (new_password !== confirm_password) { showToast('رمز جدید و تکرار آن یکسان نیستند'); return; }
+const formData = new FormData();
+formData.append('current_password', current_password);
+formData.append('new_password', new_password);
+const res = await fetch('?action=change_password', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
 }
-
+showToast('رمز عبور تغییر کرد');
+document.getElementById('currentPassword').value = '';
+document.getElementById('newPassword').value = '';
+document.getElementById('confirmPassword').value = '';
+}
+async function viewProfile(uid) {
+try {
+const res = await fetch('?action=get_user_profile&user_id=' + encodeURIComponent(uid));
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
+}
+const u = data.user;
+viewProfileTarget = u.id;
+const premiumSection = document.getElementById('viewProfilePremiumSection');
+const headerEl = document.getElementById('viewProfileHeader');
+if (u.premium) {
+premiumSection.innerHTML = `
+<div class="premium-card">
+<div class="premium-card-content">
+<div class="premium-card-head">
+<span style="font-size:28px">⭐</span>
+<h4>کاربر پرمیوم VIP</h4>
+</div>
+<div class="premium-info-row">
+<span class="premium-info-label">📅 اشتراک تا</span>
+<span class="premium-info-value">${formatDateTime(u.premium_until)}</span>
+</div>
+<div class="premium-info-row">
+<span class="premium-info-label">⏳ باقیمانده</span>
+<span class="premium-info-value">${u.premium_days_left} روز</span>
+</div>
+</div>
+</div>
+`;
+headerEl.className = 'profile-header premium';
+} else {
+premiumSection.innerHTML = '';
+headerEl.className = 'profile-header';
+}
+const avatarEl = document.getElementById('viewProfileAvatar');
+const hasAnimAvatar = u.premium && u.premium_animated_avatar;
+avatarEl.className = 'profile-avatar' + (hasAnimAvatar ? ' premium-glow' : '');
+avatarEl.innerHTML = u.avatar
+? '<img src="' + escapeHtml(resolveFileUrl(u.avatar)) + '" alt="">'
+: escapeHtml((u.name || u.username || '?')[0].toUpperCase());
+const nameHtml = escapeHtml(u.name || u.username) + badgesHtml(u);
+document.getElementById('viewProfileName').innerHTML = nameHtml;
+const usernameStyle = u.premium && u.premium_color ? ' style="color:' + escapeHtml(u.premium_color) + '"' : '';
+document.getElementById('viewProfileUsername').innerHTML = '<span' + usernameStyle + '>@' + escapeHtml(u.username) + '</span>';
+document.getElementById('viewProfileBio').textContent = u.bio || 'بیویی ثبت نشده';
+openModal('viewProfileModal');
+} catch (e) {
+showToast('خطا در دریافت پروفایل');
+}
+}
+async function startPrivateWith(uid) {
+if (!uid) return;
+closeModal('viewProfileModal');
+const existing = chats.find(c => c.type === 'private' && c.other_user_id === uid);
+if (existing) {
+openChat(existing.id);
+return;
+}
+const formData = new FormData();
+formData.append('type', 'private');
+formData.append('members[]', uid);
+const res = await fetch('?action=create_chat', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
+}
+await loadChats(true);
+if (data.chat) openChat(data.chat.id);
+}
 async function openAdminPanel() {
-    document.getElementById('adminModal').classList.add('active');
-    await loadAdminData();
+openModal('adminModal');
+await loadAdminData();
+await loadAdminChats();
+await loadAdminBot();
 }
-
+function switchAdminTab(tab, btn) {
+document.querySelectorAll('.admin-tab').forEach(b => b.classList.remove('active'));
+document.querySelectorAll('.admin-panel').forEach(p => p.classList.remove('active'));
+btn.classList.add('active');
+document.getElementById('adminPanel-' + tab).classList.add('active');
+}
 async function loadAdminData() {
-    try {
-        const [statsRes, usersRes] = await Promise.all([
-            fetch('?action=admin_get_stats'),
-            fetch('?action=admin_get_users')
-        ]);
-        const statsData = await statsRes.json();
-        const usersData = await usersRes.json();
-        if (statsData.error) { showToast(statsData.error); return; }
-        adminStats = statsData.stats;
-        adminUsers = usersData.users || [];
-        renderAdminStats();
-        renderAdminUsers();
-    } catch (e) { console.error(e); }
+try {
+const [statsRes, usersRes] = await Promise.all([
+fetch('?action=admin_get_stats'),
+fetch('?action=admin_get_users')
+]);
+const statsData = await statsRes.json();
+const usersData = await usersRes.json();
+if (statsData.error) {
+showToast(statsData.error);
+return;
 }
-
+adminStats = statsData.stats;
+adminUsers = usersData.users || [];
+renderAdminStats();
+renderAdminUsers();
+} catch (e) {
+console.error(e);
+}
+}
+async function loadAdminChats() {
+try {
+const res = await fetch('?action=admin_get_chats');
+const data = await res.json();
+if (data.error) { showToast(data.error); return; }
+adminChats = data.chats || [];
+renderAdminChats();
+} catch (e) {
+showToast('خطا در دریافت چت‌ها');
+}
+}
+async function loadAdminBot() {
+try {
+const res = await fetch('?action=admin_get_bot');
+const data = await res.json();
+if (data.error) {
+document.getElementById('botEditArea').innerHTML = '<div style="padding:24px;text-align:center;color:var(--danger)">❌ ' + escapeHtml(data.error) + '</div>';
+return;
+}
+adminBot = data.bot;
+renderBotEditForm();
+} catch (e) {
+document.getElementById('botEditArea').innerHTML = '<div style="padding:24px;text-align:center;color:var(--danger)">❌ خطا در دریافت اطلاعات ربات</div>';
+}
+}
+function renderBotEditForm() {
+if (!adminBot) return;
+const area = document.getElementById('botEditArea');
+const avatarHtml = adminBot.avatar
+? '<img src="' + escapeHtml(resolveFileUrl(adminBot.avatar)) + '" alt="">'
+: escapeHtml((adminBot.name || adminBot.username || '?')[0].toUpperCase());
+area.innerHTML = `
+<div class="profile-header">
+<div class="profile-avatar" id="botAvatar" onclick="document.getElementById('botAvatarInput').click()" style="width:80px;height:80px;border-radius:25px;font-size:32px">
+${avatarHtml}
+<div class="avatar-upload-overlay">📷</div>
+</div>
+<div style="flex:1;min-width:0">
+<div style="font-weight:800;font-size:16px">${escapeHtml(adminBot.name || adminBot.username)}</div>
+<div style="font-size:12.5px;color:var(--accent);direction:ltr;text-align:right">@${escapeHtml(adminBot.username)}</div>
+<div class="avatar-actions" style="justify-content:flex-start">
+<button class="mini-btn danger" type="button" onclick="removeBotAvatar()">🗑️ حذف عکس</button>
+</div>
+</div>
+</div>
+<input type="file" id="botAvatarInput" style="display:none" accept="image/*" onchange="uploadBotAvatar(this)">
+<div class="section-title">🤖 اطلاعات ربات</div>
+<div class="modal-field"><label>@ آیدی</label><input type="text" id="botUsername" value="${escapeHtml(adminBot.username)}" style="direction:ltr;text-align:left"></div>
+<div class="modal-field"><label>نام نمایشی</label><input type="text" id="botName" value="${escapeHtml(adminBot.name || '')}"></div>
+<div class="modal-field"><label>بیو (پیام خوش‌آمدگویی)</label><textarea id="botBio" rows="4">${escapeHtml(adminBot.bio || '')}</textarea><div class="small-note">این متن هنگام مشاهده پروفایل ربات نمایش داده می‌شود.</div></div>
+<button class="btn btn-primary btn-block" onclick="saveBot()">💾 ذخیره تغییرات ربات</button>
+`;
+}
+async function uploadBotAvatar(input) {
+if (!input.files || !input.files[0]) return;
+const formData = new FormData();
+formData.append('avatar', input.files[0]);
+try {
+const res = await fetch('?action=admin_upload_bot_avatar', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+input.value = '';
+return;
+}
+adminBot.avatar = data.avatar;
+renderBotEditForm();
+showToast('عکس ربات آپلود شد');
+} catch (e) {
+showToast('خطا در آپلود');
+}
+input.value = '';
+}
+async function removeBotAvatar() {
+if (!adminBot || !adminBot.avatar) {
+showToast('عکسی برای حذف وجود ندارد');
+return;
+}
+if (!confirm('عکس ربات حذف شود؟')) return;
+try {
+const res = await fetch('?action=admin_remove_bot_avatar', {method: 'POST'});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
+}
+adminBot.avatar = '';
+renderBotEditForm();
+showToast('عکس ربات حذف شد');
+} catch (e) {
+showToast('خطا');
+}
+}
+async function saveBot() {
+const formData = new FormData();
+formData.append('username', document.getElementById('botUsername').value);
+formData.append('name', document.getElementById('botName').value);
+formData.append('bio', document.getElementById('botBio').value);
+const res = await fetch('?action=admin_update_bot', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
+}
+showToast('ربات ذخیره شد');
+await loadAdminBot();
+}
+async function saveExchangeRate() {
+const rate = parseInt(document.getElementById('adminExchangeRate').value) || 0;
+if (rate < 1 || rate > 100000000) {
+showToast('نرخ تبدیل نامعتبر است (1 تا 100,000,000)');
+return;
+}
+const formData = new FormData();
+formData.append('rate', rate);
+try {
+const res = await fetch('?action=admin_set_exchange_rate', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
+}
+spcToToman = data.rate;
+showToast('نرخ تبدیل ذخیره شد: 1 SPC = ' + formatNumber(data.rate) + ' تومان');
+} catch (e) {
+showToast('خطا در ذخیره نرخ');
+}
+}
 function renderAdminStats() {
-    if (!adminStats) return;
-    const items = [
-        { label: 'کاربران', value: adminStats.total_users },
-        { label: 'کاربران فعال', value: adminStats.active_users },
-        { label: 'قابل جستجو', value: adminStats.searchable_users },
-        { label: 'مسدودها', value: adminStats.blocked_users },
-        { label: 'ادمین‌ها', value: adminStats.admin_users },
-        { label: 'چت‌ها', value: adminStats.total_chats },
-        { label: 'خصوصی', value: adminStats.private_chats },
-        { label: 'گروه‌ها', value: adminStats.group_chats },
-        { label: 'کانال‌ها', value: adminStats.channel_chats },
-        { label: 'پیام‌ها', value: adminStats.total_messages },
-        { label: 'پیام‌های امروز', value: adminStats.today_messages },
-        { label: 'حجم فایل‌ها', value: formatBytes(adminStats.upload_size) },
-    ];
-    document.getElementById('statsGrid').innerHTML = items.map(i => `
-        <div class="stat-card"><div class="stat-value">${i.value}</div><div class="stat-label">${i.label}</div></div>
-    `).join('');
+if (!adminStats) return;
+const items = [
+{label:'کاربران', value:adminStats.total_users, icon:'👥', cls:''},
+{label:'کاربران فعال', value:adminStats.active_users, icon:'✅', cls:''},
+{label:'پرمیوم فعال', value:adminStats.premium_users, icon:'⭐', cls:'vip'},
+{label:'پرمیوم منقضی', value:adminStats.expired_premium_users, icon:'⏰', cls:''},
+{label:'قابل جستجو', value:adminStats.searchable_users, icon:'🔍', cls:''},
+{label:'مسدودها', value:adminStats.blocked_users, icon:'⛔', cls:''},
+{label:'ادمین‌ها', value:adminStats.admin_users, icon:'👑', cls:''},
+{label:'ربات‌ها', value:adminStats.bot_users, icon:'🤖', cls:''},
+{label:'چت‌ها', value:adminStats.total_chats, icon:'💬', cls:''},
+{label:'خصوصی', value:adminStats.private_chats, icon:'💬', cls:''},
+{label:'گروه‌ها', value:adminStats.group_chats, icon:'👥', cls:''},
+{label:'کانال‌ها', value:adminStats.channel_chats, icon:'📣', cls:''},
+{label:'پیام‌ها', value:adminStats.total_messages, icon:'✉️', cls:''},
+{label:'پیام‌های امروز', value:adminStats.today_messages, icon:'✨', cls:''},
+{label:'SPC در گردش', value:formatNumber(adminStats.total_spc_in_circulation || 0), icon:'💰', cls:'spc'},
+{label:'حجم فایل‌ها', value:formatBytes(adminStats.upload_size), icon:'📦', cls:''},
+];
+document.getElementById('statsGrid').innerHTML = items.map(i => `
+<div class="stat-card ${i.cls}">
+<div class="stat-ico">${i.icon}</div>
+<div class="stat-value">${i.value}</div>
+<div class="stat-label">${i.label}</div>
+</div>
+`).join('');
 }
-
 function renderAdminUsers() {
-    const q = document.getElementById('adminUserSearch').value.trim().toLowerCase();
-    const filtered = q ? adminUsers.filter(u => u.username.toLowerCase().includes(q) || (u.name || '').toLowerCase().includes(q)) : adminUsers;
-    const tbody = document.getElementById('adminUsersTable');
-    if (filtered.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text-secondary)">کاربری یافت نشد</td></tr>`;
-        return;
-    }
-    tbody.innerHTML = filtered.map(u => {
-        const role = u.is_bot ? '<span class="badge info">ربات</span>' : (u.is_admin ? '<span class="badge warning">ادمین</span>' : '<span class="badge muted">کاربر</span>');
-        const status = u.blocked ? '<span class="badge danger">مسدود</span>' : (u.active ? '<span class="badge success">فعال</span>' : '<span class="badge danger">غیرفعال</span>');
-        const searchable = u.privacy_searchable ? '<span class="badge success">فعال</span>' : '<span class="badge muted">غیرفعال</span>';
-        const selfBadge = u.id === currentUser.id ? ' <span class="badge info">شما</span>' : '';
-        return `<tr>
-            <td>@${escapeHtml(u.username)}${selfBadge}</td>
-            <td>${escapeHtml(u.name || '-')}</td>
-            <td>${role}</td>
-            <td>${status}</td>
-            <td>${searchable}</td>
-            <td>${formatDate(u.created_at)}</td>
-            <td><div class="action-buttons">
-                ${!u.is_bot ? `<button class="mini-btn" onclick="openUserModal('${u.id}')">✏️ ویرایش</button>` : ''}
-                ${!u.is_bot && u.id !== currentUser.id ? `<button class="mini-btn danger" onclick="deleteUser('${u.id}')">🗑️ حذف</button>` : ''}
-            </div></td>
-        </tr>`;
-    }).join('');
+const q = document.getElementById('adminUserSearch').value.trim().toLowerCase();
+const filtered = q
+? adminUsers.filter(u => u.username.toLowerCase().includes(q) || (u.name || '').toLowerCase().includes(q))
+: adminUsers;
+const tbody = document.getElementById('adminUsersTable');
+if (!filtered.length) {
+tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--t2);padding:26px">کاربری یافت نشد</td></tr>';
+return;
 }
-
+tbody.innerHTML = filtered.map(u => {
+const role = u.is_bot
+? '<span class="badge info">🤖 ربات</span>'
+: (u.is_admin ? '<span class="badge warning">👑 ادمین</span>' : '<span class="badge muted">👤 کاربر</span>');
+const status = u.blocked
+? '<span class="badge danger">⛔ مسدود</span>'
+: (u.active ? '<span class="badge success">✅ فعال</span>' : '<span class="badge danger">غیرفعال</span>');
+const searchable = u.privacy_searchable ? '<span class="badge success">✅ فعال</span>' : '<span class="badge muted">غیرفعال</span>';
+const verified = u.verified ? getVerifiedBadge() : '';
+const premiumBadge = u.premium ? `<span class="badge vip">⭐ ${u.premium_days_left}d</span>` : '<span class="badge muted">—</span>';
+const walletBadge = `<span class="badge spc">💰 ${formatNumber(u.wallet_balance || 0)}</span>`;
+const selfBadge = u.id === currentUser.id ? ' <span class="badge info">شما</span>' : '';
+return `
+<tr>
+<td>@${escapeHtml(u.username)}${selfBadge} ${verified}</td>
+<td>${escapeHtml(u.name || '-')}</td>
+<td>${role}</td>
+<td>${status}</td>
+<td>${premiumBadge}</td>
+<td>${walletBadge}</td>
+<td>${searchable}</td>
+<td>${formatDate(u.created_at)}</td>
+<td>
+<div class="action-buttons">
+${!u.is_bot ? '<button class="mini-btn" onclick="openUserModal(\'' + u.id + '\')">✏️ ویرایش</button>' : ''}
+${!u.is_bot && u.id !== currentUser.id ? '<button class="mini-btn danger" onclick="deleteUser(\'' + u.id + '\')">🗑️ حذف</button>' : ''}
+</div>
+</td>
+</tr>
+`;
+}).join('');
+}
+function renderAdminChats() {
+const filter = document.getElementById('adminChatFilter').value;
+const q = document.getElementById('adminChatSearch').value.trim().toLowerCase();
+let filtered = adminChats;
+if (filter === 'group') filtered = filtered.filter(c => c.type === 'group');
+else if (filter === 'channel') filtered = filtered.filter(c => c.type === 'channel');
+else if (filter === 'verified') filtered = filtered.filter(c => c.verified);
+if (q) filtered = filtered.filter(c => c.name.toLowerCase().includes(q) || c.owner_username.toLowerCase().includes(q));
+const list = document.getElementById('adminChatsList');
+if (!filtered.length) {
+list.innerHTML = '<div style="padding:30px;text-align:center;color:var(--t2)">چتی یافت نشد</div>';
+return;
+}
+list.innerHTML = filtered.map(c => {
+const avatarPath = c.avatar_image || '';
+const avatarHtml = avatarPath
+? '<img src="' + escapeHtml(resolveFileUrl(avatarPath)) + '" alt="">'
+: escapeHtml((c.name || '?')[0].toUpperCase());
+const typeBadge = c.type === 'channel'
+? '<span class="badge success">📣 کانال</span>'
+: '<span class="badge info">👥 گروه</span>';
+const verifiedBadge = c.verified ? getVerifiedBadge() : '';
+const ownerPremiumBadge = c.owner_premium ? ' ' + getVipBadge(true) : '';
+const verifiedBtnText = c.verified ? '❌ برداشتن تایید' : '✓ تایید چت';
+const verifiedBtnClass = c.verified ? 'btn-danger' : 'btn-primary';
+return `
+<div class="chat-card">
+<div class="chat-card-head">
+<div class="chat-card-avatar">${avatarHtml}</div>
+<div class="chat-card-title">
+<div class="name">
+${escapeHtml(c.name || 'بدون نام')}
+${verifiedBadge}
+${typeBadge}
+</div>
+<div class="meta">
+👤 مالک: <strong>@${escapeHtml(c.owner_username || 'نامشخص')}</strong>${ownerPremiumBadge}
+${c.description ? ' • ' + escapeHtml(c.description) : ''}
+</div>
+</div>
+</div>
+<div class="chat-card-stats">
+<span>👥 ${c.members_count} عضو</span>
+<span>💬 ${c.messages_count} پیام</span>
+<span>🕐 ${formatDate(c.created_at)}</span>
+${c.last_message ? '<span>📨 ' + escapeHtml(c.last_message) + '</span>' : ''}
+</div>
+<div class="chat-card-actions">
+<button class="${verifiedBtnClass}" style="padding:8px 14px;font-size:12px;border-radius:10px" onclick="toggleChatVerified('${c.id}')">${verifiedBtnText}</button>
+<button class="btn-danger" style="padding:8px 14px;font-size:12px;border-radius:10px" onclick="adminDeleteChat('${c.id}')">🗑️ حذف کامل</button>
+</div>
+</div>
+`;
+}).join('');
+}
+async function toggleChatVerified(chatId) {
+const formData = new FormData();
+formData.append('chat_id', chatId);
+const res = await fetch('?action=admin_toggle_chat_verified', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
+}
+const chat = adminChats.find(c => c.id === chatId);
+if (chat) chat.verified = data.verified;
+renderAdminChats();
+await loadChats();
+showToast(data.verified ? '✅ چت تایید شد' : 'تایید چت برداشته شد');
+}
+async function adminDeleteChat(chatId) {
+if (!confirm('این چت به طور کامل حذف شود؟ این عمل قابل بازگشت نیست و تمام پیام‌ها و فایل‌ها پاک می‌شوند.')) return;
+const formData = new FormData();
+formData.append('chat_id', chatId);
+const res = await fetch('?action=admin_delete_chat', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
+}
+showToast('چت حذف شد');
+await loadAdminChats();
+await loadChats(true);
+}
+function updatePremiumActionUI() {
+const action = document.getElementById('adminPremiumAction').value;
+const daysField = document.getElementById('adminPremiumDaysField');
+if (action === 'remove' || action === 'keep') {
+daysField.style.display = 'none';
+} else {
+daysField.style.display = 'block';
+}
+}
+function renderAdminPremiumStatus(u) {
+const statusEl = document.getElementById('adminPremiumStatus');
+if (!u) {
+statusEl.innerHTML = '<div style="padding:10px 14px;background:rgba(255,215,0,.06);border:1px solid rgba(255,215,0,.2);border-radius:12px;font-size:12.5px;color:var(--t2)">🆕 کاربر جدید - اشتراک پرمیوم ندارد</div>';
+return;
+}
+if (u.premium) {
+statusEl.innerHTML = `
+<div style="padding:12px 14px;background:linear-gradient(135deg,rgba(255,215,0,.12),rgba(255,165,0,.04));border:1.5px solid rgba(255,215,0,.3);border-radius:12px">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+<span style="font-size:24px">⭐</span>
+<strong style="color:var(--vip-gold);font-size:14px">اشتراک پرمیوم فعال</strong>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px">
+<div><span style="color:var(--t2)">📅 انقضا:</span> <strong>${formatDateTime(u.premium_until)}</strong></div>
+<div><span style="color:var(--t2)">⏳ باقیمانده:</span> <strong>${u.premium_days_left} روز</strong></div>
+</div>
+</div>
+`;
+} else {
+const hadPremium = u.premium_until > 0;
+statusEl.innerHTML = `
+<div style="padding:10px 14px;background:var(--input);border:1px solid var(--border);border-radius:12px;font-size:12.5px">
+<span style="color:var(--t2)">${hadPremium ? '⏰ اشتراک پرمیوم منقضی شده' : '❌ بدون اشتراک پرمیوم'}</span>
+</div>
+`;
+}
+}
+function renderAdminWalletStatus(u) {
+const statusEl = document.getElementById('adminWalletStatus');
+if (!u) {
+statusEl.innerHTML = '<div style="padding:10px 14px;background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.2);border-radius:12px;font-size:12.5px;color:var(--t2)">🆕 کاربر جدید - موجودی: 0 SPC</div>';
+return;
+}
+const balance = u.wallet_balance || 0;
+const tomanValue = balance * spcToToman;
+statusEl.innerHTML = `
+<div style="padding:12px 14px;background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(5,150,105,.04));border:1.5px solid rgba(16,185,129,.3);border-radius:12px">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+<span style="font-size:24px">💰</span>
+<strong style="color:var(--spc-green);font-size:14px">موجودی کیف پول</strong>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px">
+<div><span style="color:var(--t2)">💎 SPC:</span> <strong>${formatNumber(balance)}</strong></div>
+<div><span style="color:var(--t2)">💵 معادل:</span> <strong>${formatToman(tomanValue)}</strong></div>
+</div>
+</div>
+`;
+}
 function openUserModal(userId = null) {
-    document.getElementById('adminUserModal').classList.add('active');
-    document.getElementById('adminUserId').value = userId || '';
-    if (!userId) {
-        document.getElementById('adminUserModalTitle').textContent = 'افزودن کاربر جدید';
-        document.getElementById('adminPasswordLabel').textContent = 'رمز عبور';
-        document.getElementById('adminUserUsername').value = '';
-        document.getElementById('adminUserName').value = '';
-        document.getElementById('adminUserBio').value = '';
-        document.getElementById('adminUserPassword').value = '';
-        document.getElementById('adminUserActive').checked = true;
-        document.getElementById('adminUserBlocked').checked = false;
-        document.getElementById('adminUserIsAdmin').checked = false;
-        document.getElementById('adminUserSearchable').checked = true;
-        return;
-    }
-    const u = adminUsers.find(x => x.id === userId);
-    if (!u) return;
-    document.getElementById('adminUserModalTitle').textContent = 'ویرایش کاربر';
-    document.getElementById('adminPasswordLabel').textContent = 'رمز عبور جدید (اختیاری)';
-    document.getElementById('adminUserUsername').value = u.username;
-    document.getElementById('adminUserName').value = u.name || '';
-    document.getElementById('adminUserBio').value = u.bio || '';
-    document.getElementById('adminUserPassword').value = '';
-    document.getElementById('adminUserActive').checked = !!u.active;
-    document.getElementById('adminUserBlocked').checked = !!u.blocked;
-    document.getElementById('adminUserIsAdmin').checked = !!u.is_admin;
-    document.getElementById('adminUserSearchable').checked = !!u.privacy_searchable;
+openModal('adminUserModal');
+document.getElementById('adminUserId').value = userId || '';
+document.getElementById('adminPremiumAction').value = 'keep';
+document.getElementById('adminPremiumDays').value = 30;
+document.getElementById('adminWalletAction').value = 'keep';
+document.getElementById('adminWalletAmount').value = 0;
+updatePremiumActionUI();
+if (!userId) {
+document.getElementById('adminUserModalTitle').textContent = 'افزودن کاربر جدید';
+document.getElementById('adminPasswordLabel').textContent = '🔑 رمز عبور';
+document.getElementById('adminUserUsername').value = '';
+document.getElementById('adminUserName').value = '';
+document.getElementById('adminUserBio').value = '';
+document.getElementById('adminUserPassword').value = '';
+document.getElementById('adminUserActive').checked = true;
+document.getElementById('adminUserBlocked').checked = false;
+document.getElementById('adminUserIsAdmin').checked = false;
+document.getElementById('adminUserSearchable').checked = true;
+document.getElementById('adminUserVerified').checked = false;
+renderAdminPremiumStatus(null);
+renderAdminWalletStatus(null);
+return;
 }
-
+const u = adminUsers.find(x => x.id === userId);
+if (!u) return;
+document.getElementById('adminUserModalTitle').textContent = 'ویرایش کاربر';
+document.getElementById('adminPasswordLabel').textContent = '🔑 رمز عبور جدید (اختیاری)';
+document.getElementById('adminUserUsername').value = u.username;
+document.getElementById('adminUserName').value = u.name || '';
+document.getElementById('adminUserBio').value = u.bio || '';
+document.getElementById('adminUserPassword').value = '';
+document.getElementById('adminUserActive').checked = !!u.active;
+document.getElementById('adminUserBlocked').checked = !!u.blocked;
+document.getElementById('adminUserIsAdmin').checked = !!u.is_admin;
+document.getElementById('adminUserSearchable').checked = !!u.privacy_searchable;
+document.getElementById('adminUserVerified').checked = !!u.verified;
+renderAdminPremiumStatus(u);
+renderAdminWalletStatus(u);
+}
 async function saveAdminUser() {
-    const user_id = document.getElementById('adminUserId').value;
-    const action = user_id ? 'admin_update_user' : 'admin_create_user';
-    const formData = new FormData();
-    if (user_id) formData.append('user_id', user_id);
-    formData.append('username', document.getElementById('adminUserUsername').value);
-    formData.append('name', document.getElementById('adminUserName').value);
-    formData.append('bio', document.getElementById('adminUserBio').value);
-    formData.append('password', document.getElementById('adminUserPassword').value);
-    formData.append('active', document.getElementById('adminUserActive').checked ? '1' : '');
-    formData.append('blocked', document.getElementById('adminUserBlocked').checked ? '1' : '');
-    formData.append('is_admin', document.getElementById('adminUserIsAdmin').checked ? '1' : '');
-    formData.append('privacy_searchable', document.getElementById('adminUserSearchable').checked ? '1' : '');
-    const res = await fetch(`?action=${action}`, { method: 'POST', body: formData });
-    const data = await res.json();
-    if (data.error) { showToast(data.error); return; }
-    closeModal('adminUserModal');
-    showToast('ذخیره شد');
-    if (user_id === currentUser.id) { setTimeout(() => window.location.reload(), 500); return; }
-    await loadAdminData();
+const user_id = document.getElementById('adminUserId').value;
+const action = user_id ? 'admin_update_user' : 'admin_create_user';
+const formData = new FormData();
+if (user_id) formData.append('user_id', user_id);
+formData.append('username', document.getElementById('adminUserUsername').value);
+formData.append('name', document.getElementById('adminUserName').value);
+formData.append('bio', document.getElementById('adminUserBio').value);
+formData.append('password', document.getElementById('adminUserPassword').value);
+formData.append('active', document.getElementById('adminUserActive').checked ? '1' : '');
+formData.append('blocked', document.getElementById('adminUserBlocked').checked ? '1' : '');
+formData.append('is_admin', document.getElementById('adminUserIsAdmin').checked ? '1' : '');
+formData.append('privacy_searchable', document.getElementById('adminUserSearchable').checked ? '1' : '');
+formData.append('verified', document.getElementById('adminUserVerified').checked ? '1' : '');
+if (user_id) {
+const premiumAction = document.getElementById('adminPremiumAction').value;
+formData.append('premium_action', premiumAction);
+if (premiumAction === 'add_days' || premiumAction === 'set_days') {
+formData.append('premium_days', document.getElementById('adminPremiumDays').value);
 }
-
+const walletAction = document.getElementById('adminWalletAction').value;
+if (walletAction !== 'keep') {
+const walletAmount = parseInt(document.getElementById('adminWalletAmount').value) || 0;
+const walletFormData = new FormData();
+walletFormData.append('user_id', user_id);
+walletFormData.append('wallet_action', walletAction);
+walletFormData.append('amount', walletAmount);
+try {
+const walletRes = await fetch('?action=admin_update_wallet', {method: 'POST', body: walletFormData});
+const walletData = await walletRes.json();
+if (walletData.error) {
+showToast('خطا در کیف پول: ' + walletData.error);
+return;
+}
+} catch (e) {
+showToast('خطا در به‌روزرسانی کیف پول');
+return;
+}
+}
+} else {
+const setDays = confirm('آیا می‌خواهید برای این کاربر اشتراک پرمیوم فعال کنید؟\n\nبله = 30 روز پرمیوم\nخیر = بدون پرمیوم');
+if (setDays) {
+formData.append('premium_days', '30');
+}
+const initialWallet = prompt('موجودی اولیه کیف پول (SPC) - برای 0 خالی بگذارید:', '0');
+if (initialWallet !== null && initialWallet !== '') {
+const walletVal = parseInt(initialWallet) || 0;
+if (walletVal >= 0) {
+formData.append('initial_wallet', walletVal);
+}
+}
+}
+const res = await fetch('?action=' + action, {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
+}
+closeModal('adminUserModal');
+showToast('ذخیره شد');
+if (user_id === currentUser.id) {
+setTimeout(() => window.location.reload(), 500);
+return;
+}
+await loadAdminData();
+}
 async function deleteUser(userId) {
-    if (!confirm('این کاربر حذف شود؟ این عمل قابل بازگشت نیست.')) return;
-    const formData = new FormData();
-    formData.append('user_id', userId);
-    const res = await fetch('?action=admin_delete_user', { method: 'POST', body: formData });
-    const data = await res.json();
-    if (data.error) { showToast(data.error); return; }
-    showToast('کاربر حذف شد');
-    await loadAdminData();
+if (!confirm('این کاربر حذف شود؟ این عمل قابل بازگشت نیست.')) return;
+const formData = new FormData();
+formData.append('user_id', userId);
+const res = await fetch('?action=admin_delete_user', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
 }
-
-async function toggleRecording() {
-    if (isRecording) {
-        await stopRecording();
-    } else {
-        await startRecording();
-    }
+showToast('کاربر حذف شد');
+await loadAdminData();
 }
-
-async function startRecording() {
-    if (!currentChat) return;
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        showToast('مرورگر شما از ضبط صدا پشتیبانی نمی‌کند');
-        return;
-    }
-    try {
-        recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (e) {
-        showToast('دسترسی به میکروفون رد شد');
-        return;
-    }
-
-    const mimes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
-    let mime = '';
-    for (const m of mimes) {
-        if (MediaRecorder.isTypeSupported(m)) { mime = m; break; }
-    }
-
-    audioChunks = [];
-    try {
-        mediaRecorder = new MediaRecorder(recordingStream, mime ? { mimeType: mime } : {});
-    } catch (e) {
-        mediaRecorder = new MediaRecorder(recordingStream);
-    }
-
-    mediaRecorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) audioChunks.push(e.data);
-    };
-
-    mediaRecorder.onstop = () => {
-        if (recordingStream) {
-            recordingStream.getTracks().forEach(t => t.stop());
-            recordingStream = null;
-        }
-    };
-
-    mediaRecorder.start();
-    isRecording = true;
-    recordingStart = Date.now();
-
-    document.getElementById('messageInput').style.display = 'none';
-    document.getElementById('attachBtn').style.display = 'none';
-    document.getElementById('sendBtn').style.display = 'none';
-    document.getElementById('voiceBtn').classList.add('recording');
-    document.getElementById('voiceBtn').innerHTML = '⏹';
-    document.getElementById('recordingUI').classList.add('active');
-    document.getElementById('recTime').textContent = '0:00';
-
-    recordingInterval = setInterval(() => {
-        const elapsed = Date.now() - recordingStart;
-        document.getElementById('recTime').textContent = formatDuration(elapsed);
-    }, 200);
+async function openMembersModal() {
+if (!currentChat) return;
+document.getElementById('membersTitle').textContent = 'اعضای ' + (currentChat.display_name || currentChat.name || '');
+openModal('membersModal');
+const canManage = currentChat.owner_id === currentUser.id || currentUser.is_admin;
+document.getElementById('addMemberBtnInModal').style.display = (canManage && currentChat.type !== 'private' && currentChat.type !== 'saved') ? 'inline-flex' : 'none';
+try {
+const res = await fetch('?action=get_chat_members&chat_id=' + encodeURIComponent(currentChat.id));
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
 }
-
-async function stopRecording() {
-    if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
-
-    const duration = Date.now() - recordingStart;
-
-    return new Promise((resolve) => {
-        mediaRecorder.onstop = () => {
-            if (recordingStream) {
-                recordingStream.getTracks().forEach(t => t.stop());
-                recordingStream = null;
-            }
-            clearInterval(recordingInterval);
-            isRecording = false;
-
-            document.getElementById('messageInput').style.display = '';
-            document.getElementById('attachBtn').style.display = '';
-            document.getElementById('sendBtn').style.display = '';
-            document.getElementById('voiceBtn').classList.remove('recording');
-            document.getElementById('voiceBtn').innerHTML = '🎤';
-            document.getElementById('recordingUI').classList.remove('active');
-
-            if (duration < 800) {
-                showToast('ضبط خیلی کوتاه بود');
-                resolve();
-                return;
-            }
-
-            const mime = mediaRecorder.mimeType || 'audio/webm';
-            const blob = new Blob(audioChunks, { type: mime });
-            const ext = mime.includes('mp4') ? 'm4a' : (mime.includes('ogg') ? 'ogg' : 'webm');
-            const fileName = `voice_${Date.now()}.${ext}`;
-            const file = new File([blob], fileName, { type: mime });
-
-            sendVoiceFile(file);
-            resolve();
-        };
-        mediaRecorder.stop();
-    });
+const members = data.members || [];
+const list = document.getElementById('membersList');
+if (!members.length) {
+list.innerHTML = '<div style="padding:16px;text-align:center;color:var(--t2)">هیچ عضوی یافت نشد</div>';
+return;
 }
-
-function cancelRecording() {
-    if (!mediaRecorder) return;
-    if (mediaRecorder.state !== 'inactive') {
-        mediaRecorder.onstop = () => {
-            if (recordingStream) {
-                recordingStream.getTracks().forEach(t => t.stop());
-                recordingStream = null;
-            }
-            clearInterval(recordingInterval);
-            isRecording = false;
-            audioChunks = [];
-            document.getElementById('messageInput').style.display = '';
-            document.getElementById('attachBtn').style.display = '';
-            document.getElementById('sendBtn').style.display = '';
-            document.getElementById('voiceBtn').classList.remove('recording');
-            document.getElementById('voiceBtn').innerHTML = '🎤';
-            document.getElementById('recordingUI').classList.remove('active');
-        };
-        mediaRecorder.stop();
-    }
-    showToast('ضبط لغو شد');
+list.innerHTML = members.map(m => {
+const avatarHtml = m.avatar ? '<img src="' + escapeHtml(resolveFileUrl(m.avatar)) + '" alt="">' : escapeHtml((m.name || m.username || '?')[0].toUpperCase());
+const badge = m.is_owner ? '<span class="member-badge">مالک</span>' : (m.is_admin ? '<span class="member-badge">ادمین</span>' : '');
+const badges = badgesHtml(m);
+const onlineStatus = m.online ? '<span class="online-dot"></span> آنلاین' : 'آخرین بازدید: ' + (m.last_seen_text || 'نامشخص');
+let removeBtn = '';
+const canRemove = canManage && !m.is_owner && m.id !== currentUser.id && currentChat.type !== 'private' && currentChat.type !== 'saved';
+if (canRemove) {
+removeBtn = `<div class="member-actions"><button class="mini-btn danger" onclick="removeMemberFromChat('${m.id}')">🚫 حذف</button></div>`;
 }
-
-async function sendVoiceFile(file) {
-    if (!currentChat) return;
-    const formData = new FormData();
-    formData.append('chat_id', currentChat.id);
-    formData.append('file', file);
-    formData.append('caption', '🎙️ پیام صوتی');
-    try {
-        const res = await fetch('?action=send_message', { method: 'POST', body: formData });
-        const data = await res.json();
-        if (data.error) { showToast(data.error); return; }
-        loadChats();
-        openChat(currentChat.id);
-    } catch (e) { showToast('خطا در ارسال صدا'); }
+return `
+<div class="member-list-item">
+<div class="member-avatar">${avatarHtml}</div>
+<div class="member-info">
+<div class="member-name">${escapeHtml(m.name || m.username)} ${badges} ${badge}</div>
+<div class="member-status">${onlineStatus}</div>
+</div>
+${removeBtn}
+</div>
+`;
+}).join('');
+} catch (e) {
+showToast('خطا در دریافت اعضا');
 }
-
+}
+function openMembersModalFromProfile() {
+closeModal('chatProfileModal');
+openMembersModal();
+}
+function openChatProfile() {
+if (!currentChat || currentChat.type === 'saved' || currentChat.type === 'private') return;
+document.getElementById('chatProfileTitle').textContent = currentChat.name || 'پروفایل چت';
+document.getElementById('chatProfileIcon').textContent = currentChat.type === 'channel' ? '📣' : '👥';
+const avatarEl = document.getElementById('chatProfileAvatar');
+const avatarPath = currentChat.avatar_image || '';
+avatarEl.innerHTML = avatarPath
+? '<img src="' + escapeHtml(resolveFileUrl(avatarPath)) + '" alt="">'
+: escapeHtml((currentChat.name || '?')[0].toUpperCase());
+let nameHtml = escapeHtml(currentChat.name || 'بدون نام');
+if (currentChat.verified) nameHtml += ' ' + getVerifiedBadge();
+document.getElementById('chatProfileName').innerHTML = nameHtml;
+document.getElementById('chatProfileType').textContent = currentChat.type === 'channel' ? '📣 کانال' : '👥 گروه';
+document.getElementById('chatProfileDesc').textContent = currentChat.description || 'توضیحاتی ثبت نشده است';
+const ownerPremiumBadge = currentChat.owner_premium ? ' ' + getVipBadge(true) : '';
+document.getElementById('chatProfileOwner').innerHTML = (currentChat.owner_name ? ('@' + currentChat.owner_username + ownerPremiumBadge) : 'نامشخص');
+const membersCount = currentChat.members ? currentChat.members.length : 0;
+document.getElementById('chatProfileStats').innerHTML = `👥 ${membersCount} عضو<br>💬 ${currentMessages.length} پیام در این گفتگو`;
+openModal('chatProfileModal');
+}
+async function removeMemberFromChat(userId) {
+if (!currentChat) return;
+const member = currentChat.members?.includes(userId);
+if (!member) return;
+const user = adminUsers.find(u => u.id === userId);
+const userName = user ? (user.name || user.username) : 'این کاربر';
+if (!confirm('آیا از حذف ' + userName + ' از این چت اطمینان دارید؟')) return;
+const formData = new FormData();
+formData.append('chat_id', currentChat.id);
+formData.append('user_id', userId);
+try {
+const res = await fetch('?action=remove_member_from_chat', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
+}
+showToast('عضو حذف شد');
+await openMembersModal();
+await loadChats();
+refreshMessages(true);
+} catch (e) {
+showToast('خطا در حذف عضو');
+}
+}
+async function openAddMembersModal() {
+if (!currentChat) return;
+closeModal('chatMenuModal');
+addMembersSelected = [];
+addMembersList = [];
+document.getElementById('addMemberSearch').value = '';
+renderAddMemberChips();
+renderAddMembersList();
+openModal('addMembersModal');
+try {
+const res = await fetch('?action=get_users');
+const data = await res.json();
+addMembersList = (data.users || []).filter(u => {
+return !(currentChat.members || []).includes(u.id);
+});
+renderAddMembersList();
+} catch (e) {
+showToast('خطا در دریافت کاربران');
+}
+}
+function renderAddMembersList() {
+const list = document.getElementById('addMembersList');
+if (!addMembersList.length) {
+list.innerHTML = '<div style="padding:16px;text-align:center;color:var(--t2);font-size:13px">کاربری برای افزودن یافت نشد</div>';
+return;
+}
+list.innerHTML = addMembersList.map(u => {
+const avatarHtml = u.avatar ? '<img src="' + escapeHtml(resolveFileUrl(u.avatar)) + '" alt="">' : escapeHtml((u.name || u.username || '?')[0].toUpperCase());
+const badges = badgesHtml(u);
+return `
+<label class="user-option">
+<input type="checkbox" name="addMemberPick" value="${u.id}" onchange="updateAddMembersSelected()" ${addMembersSelected.includes(u.id) ? 'checked' : ''}>
+<div class="user-option-avatar">${avatarHtml}</div>
+<div class="user-option-info">
+<div class="user-option-name">${escapeHtml(u.name || u.username)}${badges}</div>
+<div class="user-option-username">@${escapeHtml(u.username)}</div>
+</div>
+</label>
+`;
+}).join('');
+}
+function updateAddMembersSelected() {
+const checked = Array.from(document.querySelectorAll('#addMembersList input:checked'));
+addMembersSelected = checked.map(i => i.value);
+renderAddMemberChips();
+}
+function renderAddMemberChips() {
+const box = document.getElementById('addMemberChips');
+if (!addMembersSelected.length) {
+box.innerHTML = '';
+return;
+}
+box.innerHTML = addMembersSelected.map(id => {
+const u = addMembersList.find(x => x.id === id) || {name: 'کاربر', username: 'کاربر'};
+return '<span class="member-chip">' + escapeHtml(u.name || u.username || 'کاربر') + '<button type="button" onclick="event.preventDefault();removeAddMember(\'' + id + '\')">✖️</button></span>';
+}).join('');
+}
+function removeAddMember(id) {
+addMembersSelected = addMembersSelected.filter(m => m !== id);
+renderAddMemberChips();
+const cb = document.querySelector('#addMembersList input[value="' + id + '"]');
+if (cb) cb.checked = false;
+}
+let addMemberSearchTimeout = null;
+function searchAddMembers() {
+clearTimeout(addMemberSearchTimeout);
+const q = document.getElementById('addMemberSearch').value.trim();
+if (!q) {
+renderAddMembersList();
+return;
+}
+addMemberSearchTimeout = setTimeout(async () => {
+try {
+const res = await fetch('?action=search_users&q=' + encodeURIComponent(q));
+const data = await res.json();
+addMembersList = (data.users || []).filter(u => {
+return !(currentChat.members || []).includes(u.id);
+});
+renderAddMembersList();
+} catch (e) {
+showToast('خطا در جستجو');
+}
+}, 300);
+}
+async function submitAddMembers() {
+if (!addMembersSelected.length) {
+showToast('حداقل یک کاربر انتخاب کنید');
+return;
+}
+const formData = new FormData();
+formData.append('chat_id', currentChat.id);
+addMembersSelected.forEach(m => formData.append('members[]', m));
+try {
+const res = await fetch('?action=add_members_to_chat', {method: 'POST', body: formData});
+const data = await res.json();
+if (data.error) {
+showToast(data.error);
+return;
+}
+closeModal('addMembersModal');
+showToast((data.added_count || 0) + ' عضو اضافه شد');
+await loadChats();
+refreshMessages(true);
+} catch (e) {
+showToast('خطا در افزودن اعضا');
+}
+}
+function saveDraft(chatId, text) {
+if (!chatId) return;
+if (text) {
+localStorage.setItem('draft_' + chatId, text);
+} else {
+localStorage.removeItem('draft_' + chatId);
+}
+}
+function loadDraft(chatId) {
+if (!chatId) return '';
+return localStorage.getItem('draft_' + chatId) || '';
+}
 const msgInput = document.getElementById('messageInput');
 msgInput.addEventListener('input', function() {
-    this.style.height = 'auto';
-    this.style.height = Math.min(this.scrollHeight, 120) + 'px';
-});
-
-msgInput.addEventListener('keypress', function(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-    }
-});
-
-document.getElementById('fileInput').addEventListener('change', function() {
-    if (this.files && this.files[0]) openAttachmentModal(this.files[0], 'file');
-    this.value = '';
-});
-
-document.getElementById('imageInput').addEventListener('change', function() {
-    if (this.files && this.files[0]) openAttachmentModal(this.files[0], 'image');
-    this.value = '';
-});
-
-document.getElementById('videoInput').addEventListener('change', function() {
-    if (this.files && this.files[0]) openAttachmentModal(this.files[0], 'video');
-    this.value = '';
-});
-
-document.querySelectorAll('.modal-overlay').forEach(overlay => {
-    overlay.addEventListener('click', e => {
-        if (e.target === overlay) {
-            overlay.classList.remove('active');
-            if (fabOpen) closeFab();
-            if (attachOpen) closeAttach();
-        }
-    });
-});
-
-document.addEventListener('click', function(e) {
-    const fab = document.getElementById('fabContainer');
-    if (fabOpen && !fab.contains(e.target)) closeFab();
-    const attachPop = document.getElementById('attachPop');
-    const attachBtn = document.getElementById('attachBtn');
-    if (attachOpen && !attachPop.contains(e.target) && !attachBtn.contains(e.target)) closeAttach();
-});
-
-window.addEventListener('beforeunload', (e) => {
-    if (isRecording) {
-        e.preventDefault();
-        e.returnValue = '';
-    }
-});
-
-const urlParams = new URLSearchParams(window.location.search);
-const joinParam = urlParams.get('join');
-
-async function init() {
-    initTheme();
-    initNotifications();
-    await loadChats();
-    if (joinParam) {
-        const chat = chats.find(c => c.public_id === joinParam);
-        if (chat) openChat(chat.id);
-    } else {
-        const chatParam = urlParams.get('chat');
-        if (chatParam) {
-            const chat = chats.find(c => c.id === chatParam);
-            if (chat) openChat(chat.id);
-        }
-    }
+this.style.height = 'auto';
+this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+if (currentChat) {
+saveDraft(currentChat.id, this.value);
 }
-
+});
+msgInput.addEventListener('keypress', function(e) {
+if (e.key === 'Enter' && !e.shiftKey) {
+e.preventDefault();
+sendMessage();
+}
+});
+document.getElementById('fileInput').addEventListener('change', function() {
+if (this.files && this.files[0]) openAttachmentModal(this.files[0], 'file');
+this.value = '';
+});
+document.getElementById('imageInput').addEventListener('change', function() {
+if (this.files && this.files[0]) openAttachmentModal(this.files[0], 'image');
+this.value = '';
+});
+document.getElementById('videoInput').addEventListener('change', function() {
+if (this.files && this.files[0]) openAttachmentModal(this.files[0], 'video');
+this.value = '';
+});
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+overlay.addEventListener('click', e => {
+if (e.target === overlay) {
+overlay.classList.remove('active');
+if (fabOpen) closeFab();
+if (attachOpen) closeAttach();
+}
+});
+});
+document.addEventListener('click', function(e) {
+const fab = document.getElementById('fabContainer');
+if (fabOpen && !fab.contains(e.target)) closeFab();
+const attachPop = document.getElementById('attachPop');
+const attachBtn = document.querySelector('.message-input .round-btn[onclick="toggleAttach()"]');
+if (attachOpen && !attachPop.contains(e.target) && attachBtn && !attachBtn.contains(e.target)) closeAttach();
+if (!e.target.closest('.reaction-picker') && !e.target.closest('.msg-action-inline')) {
+closeReactionPickers();
+}
+});
+async function applyLiveChange() {
+try {
+if (currentChat) {
+await refreshMessages();
+}
+await loadChats();
+} catch (e) {}
+}
+async function liveLoop() {
+if (liveStopped || liveRunning) return;
+liveRunning = true;
+while (!liveStopped) {
+try {
+const url = '?action=poll_state&wait=25' + (liveState ? '&known=' + encodeURIComponent(liveState) : '');
+const res = await fetch(url, {cache: 'no-store'});
+const data = await res.json();
+if (data && data.state) {
+const changed = liveState && data.state !== liveState;
+liveState = data.state;
+if (changed) await applyLiveChange();
+}
+} catch (e) {
+await new Promise(r => setTimeout(r, 3000));
+}
+}
+liveRunning = false;
+}
+function startLiveUpdates() {
+liveStopped = false;
+liveLoop();
+}
+async function init() {
+initTheme();
+await loadChats(true);
+startLiveUpdates();
+}
 init();
 </script>
 </body>
