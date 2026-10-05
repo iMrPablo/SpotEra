@@ -1481,6 +1481,58 @@ body{background:var(--bg);color:var(--t1);transition:background .35s,color .35s}
 .fab-container{bottom:16px;left:14px}
 .users-table{min-width:700px}
 }
+/* ==================== استایل اختصاصی ویس (پیام صوتی) ==================== */
+.mic-btn{position:relative;width:44px;height:44px;flex:none;border-radius:15px;border:1.5px solid rgba(61,219,196,.35);background:linear-gradient(145deg,rgba(61,219,196,.16),rgba(23,176,155,.08));color:var(--accent);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:19px;transition:.22s;-webkit-user-select:none;user-select:none;touch-action:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+.mic-btn:hover{transform:translateY(-2px) scale(1.04);border-color:var(--accent);box-shadow:0 8px 22px rgba(23,176,155,.35)}
+.mic-btn:active{transform:scale(.95)}
+.mic-ico{display:block;line-height:1;filter:drop-shadow(0 0 6px rgba(61,219,196,.4));position:relative;z-index:2}
+.mic-pulse{position:absolute;inset:-2px;border-radius:17px;border:2px solid var(--accent);opacity:0;pointer-events:none}
+.mic-btn.ready .mic-pulse{animation:micReadyPulse 1.6s ease-out infinite}
+@keyframes micReadyPulse{0%{opacity:.7;transform:scale(.9)}70%{opacity:0;transform:scale(1.35)}100%{opacity:0;transform:scale(1.35)}}
+.voice-ui{flex:1;align-items:center;gap:9px;background:linear-gradient(145deg,var(--card),var(--card-2));border:1.5px solid rgba(255,107,107,.4);border-radius:17px;padding:6px 9px;animation:popIn .2s ease;box-shadow:0 8px 26px rgba(255,80,80,.14)}
+.voice-cancel-btn{width:36px;height:36px;flex:none;border-radius:12px;border:1px solid var(--border-strong);background:transparent;color:var(--danger);font-size:15px;cursor:pointer;transition:.2s;display:flex;align-items:center;justify-content:center}
+.voice-cancel-btn:hover{background:rgba(255,107,107,.14);transform:rotate(90deg)}
+.voice-wave{flex:1;display:flex;align-items:center;justify-content:space-between;gap:2px;height:36px;min-width:60px;overflow:hidden}
+.voice-wave span{flex:1;max-width:5px;min-width:2px;height:14%;border-radius:3px;background:linear-gradient(180deg,#ff9b9b,#ff5470);animation:vbarBounce 1s ease-in-out infinite;animation-delay:calc(var(--i,0)*.07s)}
+@keyframes vbarBounce{0%,100%{transform:scaleY(.55)}50%{transform:scaleY(1)}}
+.voice-timer{direction:ltr;font-weight:800;font-size:13.5px;color:#ff8f8f;font-family:'Vazirmatn',Tahoma,sans-serif;min-width:38px;text-align:center;display:flex;align-items:center;gap:5px}
+.voice-timer::before{content:'';width:8px;height:8px;border-radius:50%;background:#ff5470;animation:recDot 1s steps(2,start) infinite}
+@keyframes recDot{0%,100%{opacity:1}50%{opacity:.15}}
+.voice-send-btn{width:40px;height:40px;flex:none;border-radius:13px;border:none;background:linear-gradient(145deg,#62f7df,#0eb9a2);color:#04302a;font-size:17px;cursor:pointer;transition:.2s;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(14,185,162,.35)}
+.voice-send-btn:hover{transform:translateY(-2px) scale(1.05)}
+.voice-send-btn:disabled{opacity:.5;cursor:wait;transform:none}
+.attach-ico-voice{background:linear-gradient(145deg,rgba(61,219,196,.22),rgba(23,176,155,.1)) !important;border:1px solid rgba(61,219,196,.35)}
+.voice-perm-overlay{position:fixed;inset:0;background:rgba(3,10,16,.72);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);z-index:1200;display:flex;align-items:center;justify-content:center;padding:18px;animation:permFade .25s ease}
+@keyframes permFade{from{opacity:0}to{opacity:1}}
+.voice-perm-card{background:linear-gradient(160deg,var(--card),var(--panel-solid));border:1px solid var(--border-strong);border-radius:26px;padding:30px 26px;max-width:370px;width:100%;text-align:center;box-shadow:var(--shadow);animation:modalIn .32s cubic-bezier(.22,.9,.3,1)}
+.voice-perm-icon{width:88px;height:88px;margin:0 auto 16px;border-radius:50%;background:radial-gradient(circle at 32% 28%,rgba(61,219,196,.35),rgba(23,176,155,.08));border:1.5px solid rgba(61,219,196,.45);display:flex;align-items:center;justify-content:center;font-size:40px;animation:permFloat 2.4s ease-in-out infinite}
+@keyframes permFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+.voice-perm-title{font-size:17px;font-weight:800;color:var(--t1);margin-bottom:8px}
+.voice-perm-desc{font-size:13px;line-height:1.9;color:var(--t2);margin-bottom:22px}
+.voice-perm-actions{display:flex;gap:10px}
+.voice-perm-actions button{flex:1;padding:12px 0;border-radius:15px;border:none;cursor:pointer;font-size:14px;font-weight:800;font-family:inherit;transition:.2s}
+.vp-allow{background:linear-gradient(145deg,#62f7df,#0eb9a2);color:#04302a;box-shadow:0 8px 22px rgba(14,185,162,.3)}
+.vp-allow:hover{transform:translateY(-2px)}
+.vp-deny{background:transparent;border:1.5px solid var(--border-strong) !important;color:var(--t2)}
+.vp-deny:hover{background:var(--hover);color:var(--t1)}
+.voice-bubble{display:flex;align-items:center;gap:10px;direction:ltr;min-width:215px;max-width:300px;padding:10px 12px;border-radius:17px;background:linear-gradient(145deg,rgba(61,219,196,.13),rgba(23,176,155,.05));border:1px solid rgba(61,219,196,.28);box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+.message.me .voice-bubble{background:linear-gradient(145deg,rgba(61,219,196,.2),rgba(23,176,155,.09));border-color:rgba(61,219,196,.4)}
+.voice-play-btn{width:42px;height:42px;flex:none;border-radius:50%;border:none;background:linear-gradient(145deg,#62f7df,#0eb9a2);color:#04302a;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.2s;box-shadow:0 5px 16px rgba(14,185,162,.4)}
+.voice-play-btn:hover{transform:scale(1.09)}
+.voice-play-btn:active{transform:scale(.93)}
+.voice-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.voice-waveform{display:flex;align-items:center;gap:2px;height:30px;cursor:pointer;padding:0 1px}
+.voice-waveform span{flex:1;min-width:2px;max-width:5px;border-radius:3px;background:rgba(138,162,178,.45);transition:background .15s}
+[data-theme="light"] .voice-waveform span{background:rgba(93,118,132,.35)}
+.voice-waveform span.played{background:linear-gradient(180deg,#3ddbc4,#17b09b);box-shadow:0 0 6px rgba(61,219,196,.45)}
+.voice-waveform.static span{background:rgba(61,219,196,.55)}
+.voice-bottom{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.voice-duration{font-size:11.5px;font-weight:800;color:var(--t2);direction:ltr;font-variant-numeric:tabular-nums}
+.voice-listen-hint{font-size:10.5px;font-weight:800;color:#ff9d5c;letter-spacing:.2px}
+.voice-listen-hint.listened{color:var(--accent)}
+.voice-dl{flex:none;width:30px;height:30px;border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--t2);text-decoration:none;font-size:13px;background:rgba(255,255,255,.05);border:1px solid var(--border);transition:.2s}
+.voice-dl:hover{color:var(--accent);border-color:var(--accent);transform:translateY(-2px)}
+.attach-voice{width:100%}
 </style>
 </head>
 <body data-theme="dark">
@@ -1573,7 +1625,7 @@ body{background:var(--bg);color:var(--t1);transition:background .35s,color .35s}
 <div class="attach-popup" id="attachPop">
 <button class="attach-popup-item" onclick="pickAttach('image')"><span class="ico">🖼️</span><span>تصویر</span></button>
 <button class="attach-popup-item" onclick="pickAttach('video')"><span class="ico">🎬</span><span>ویدیو</span></button>
-<button class="attach-popup-item" onclick="pickAttach('voice')"><span class="ico ico-voice">🎙️</span><span>پیام صوتی (ویس)</span></button>
+<button class="attach-popup-item" onclick="pickAttach('voice')"><span class="ico attach-ico-voice">🎙️</span><span>پیام صوتی (ویس)</span></button>
 <button class="attach-popup-item" onclick="pickAttach('file')"><span class="ico">📄</span><span>فایل</span></button>
 </div>
 </div>
@@ -1588,7 +1640,7 @@ body{background:var(--bg);color:var(--t1);transition:background .35s,color .35s}
 <button class="voice-send-btn" id="voiceSendBtn" type="button" title="ارسال ویس" onclick="sendVoice()">➤</button>
 </div>
 <textarea id="messageInput" placeholder="پیام خود را بنویسید..." rows="1"></textarea>
-<button class="mic-btn" id="micBtn" type="button" title="ضبط و ارسال پیام صوتی" onmousedown="startVoice(event)" ontouchstart="startVoice(event)"><span class="mic-ico">🎙️</span><span class="mic-pulse"></span></button>
+<button class="mic-btn" id="micBtn" type="button" title="برای ضبط ویس، دکمه میکروفون را نگه دارید" onclick="requestMicPermission()" onmousedown="startVoice(event)" ontouchstart="startVoice(event)"><span class="mic-ico">🎙️</span><span class="mic-pulse"></span></button>
 <button class="send-btn" onclick="sendMessage()" type="button">➤</button>
 </div>
 </div>
@@ -2110,7 +2162,7 @@ function pickAttach(type) {
 closeAttach();
 if (type === 'image') document.getElementById('imageInput').click();
 else if (type === 'video') document.getElementById('videoInput').click();
-else if (type === 'voice') document.getElementById('voiceInput').click();
+else if (type === 'voice') { closeAttach(); requestMicPermission(); return; }
 else document.getElementById('fileInput').click();
 }
 function updateTotalNotifBadge() {
@@ -2815,17 +2867,77 @@ currentVoiceAudio = null;
 document.querySelectorAll('.voice-play-btn').forEach(b => { if (b.textContent === '⏸') b.textContent = '▶'; });
 }
 function fmtVoiceTime(s) { s = Math.max(0, Math.floor(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+// ---------- پنل اختصاصی درخواست مجوز میکروفون ----------
+let micPermResolve = null;
+function requestMicPermission() {
+return new Promise((resolve) => {
+micPermResolve = resolve;
+if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') {
+showToast('مرورگر شما از ضبط صدا پشتیبانی نمی‌کند');
+resolve(false);
+micPermResolve = null;
+return;
+}
+if (document.getElementById('voicePermOverlay')) { resolve(false); return; }
+const ov = document.createElement('div');
+ov.id = 'voicePermOverlay';
+ov.className = 'voice-perm-overlay';
+ov.setAttribute('dir', 'rtl');
+ov.innerHTML = '<div class="voice-perm-card">' +
+'<div class="voice-perm-icon">🎙️</div>' +
+'<div class="voice-perm-title">اجازه دسترسی به میکروفون</div>' +
+'<div class="voice-perm-desc">برای ضبط و ارسال پیام صوتی (ویس)، اسپاتیرا به میکروفون شما نیاز دارد.<br>پس از انتخاب «اجازه دادن»، دکمه میکروفون را نگه دارید تا ضبط شروع شود.</div>' +
+'<div class="voice-perm-actions">' +
+'<button type="button" class="vp-allow" onclick="micPermResult(true)">✔ اجازه دادن</button>' +
+'<button type="button" class="vp-deny" onclick="micPermResult(false)">لغو</button>' +
+'</div></div>';
+document.body.appendChild(ov);
+});
+}
+function micPermResult(allowed) {
+const ov = document.getElementById('voicePermOverlay');
+if (ov) ov.remove();
+if (micPermResolve) {
+const r = micPermResolve;
+micPermResolve = null;
+r(allowed);
+}
+if (allowed) {
+const mb = document.getElementById('micBtn');
+if (mb) { mb.classList.add('ready'); mb.title = 'دکمه میکروفون را برای ضبط نگه دارید'; }
+showToast('🎙️ حالا دکمه میکروفون را نگه دارید تا ضبط شروع شود');
+} else {
+showToast('دسترسی به میکروفون لغو شد');
+}
+}
 async function startVoice(e) {
 if (e && e.type === 'touchstart' && e.cancelable) e.preventDefault();
 if (voiceRecorder && voiceRecorder.state === 'recording') return;
+if (document.getElementById('voicePermOverlay')) return;
 if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') {
 showToast('مرورگر شما از ضبط صدا پشتیبانی نمی‌کند');
 return;
 }
+let permOk = true;
+try {
+if (navigator.permissions && navigator.permissions.query) {
+const pState = await navigator.permissions.query({name: 'microphone'});
+if (pState.state === 'prompt') permOk = await requestMicPermission();
+} else {
+permOk = await requestMicPermission();
+}
+} catch (err) { permOk = true; }
+if (!permOk) return;
 try {
 voiceStream = await navigator.mediaDevices.getUserMedia({audio: true});
 } catch (err) {
+if (err && (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')) {
+showToast('مجوز میکروفون داده نشد؛ از تنظیمات مرورگر دسترسی را فعال کنید');
+} else if (err && err.name === 'NotFoundError') {
+showToast('میکروفونی روی دستگاه شما پیدا نشد');
+} else {
 showToast('دسترسی به میکروفون داده نشد');
+}
 return;
 }
 const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '');
@@ -2852,9 +2964,15 @@ document.querySelectorAll('.message-input .send-btn').forEach(b => b.style.displ
 const wave = document.getElementById('voiceWave');
 wave.innerHTML = '';
 voiceWaveBars = [];
-for (let i = 0; i < 22; i++) { const s = document.createElement('span'); wave.appendChild(s); voiceWaveBars.push(s); }
+for (let i = 0; i < 22; i++) { const s = document.createElement('span'); s.style.setProperty('--i', String(i)); wave.appendChild(s); voiceWaveBars.push(s); }
 document.getElementById('voiceUi').style.display = 'flex';
 document.getElementById('voiceTimer').textContent = '0:00';
+document.getElementById('voiceSendBtn').disabled = false;
+document.getElementById('voiceSendBtn').textContent = '➤';
+document.body.classList.add('voice-recording');
+window.addEventListener('mouseup', handleVoiceMouseUp);
+window.addEventListener('touchend', handleVoiceTouchEnd);
+window.addEventListener('touchcancel', handleVoiceTouchEnd);
 voiceTimerInt = setInterval(() => {
 const d = Math.floor((Date.now() - voiceStartTs) / 1000);
 document.getElementById('voiceTimer').textContent = fmtVoiceTime(d);
@@ -2894,10 +3012,18 @@ document.getElementById('voiceUi').style.display = 'none';
 document.getElementById('messageInput').style.display = '';
 document.getElementById('micBtn').style.display = '';
 document.querySelectorAll('.message-input .send-btn').forEach(b => b.style.display = '');
+window.removeEventListener('mouseup', handleVoiceMouseUp);
+window.removeEventListener('touchend', handleVoiceTouchEnd);
+window.removeEventListener('touchcancel', handleVoiceTouchEnd);
+document.body.classList.remove('voice-recording');
 }
 function stopVoiceRecording(send) {
 if (!voiceRecorder || voiceRecorder.state !== 'recording') return;
-if (send) voiceRecorder.stop();
+if (send) {
+const sb = document.getElementById('voiceSendBtn');
+if (sb) { sb.disabled = true; sb.textContent = '⏳'; }
+voiceRecorder.stop();
+}
 else { voiceRecorder.onstop = null; voiceRecorder.stop(); stopVoiceStream(); }
 }
 function cancelVoice() {
@@ -2905,6 +3031,37 @@ if (voiceRecorder && voiceRecorder.state === 'recording') { voiceRecorder.onstop
 stopVoiceStream();
 showToast('ویس لغو شد');
 }
+// ---------- آزادسازی انگشت: رها روی دکمه ➤ = ارسال، رها روی ✖ = لغو، در غیر این صورت ضبط ادامه می‌یابد ----------
+function isPointOverEl(x, y, el) {
+if (!el || el.style.display === 'none') return false;
+const r = el.getBoundingClientRect();
+return x >= r.left - 14 && x <= r.right + 14 && y >= r.top - 14 && y <= r.bottom + 14;
+}
+function handleVoiceMouseUp(e) {
+if (!voiceRecorder || voiceRecorder.state !== 'recording') return;
+const x = e.clientX, y = e.clientY;
+if (isPointOverEl(x, y, document.getElementById('voiceSendBtn'))) { stopVoiceRecording(true); }
+else if (isPointOverEl(x, y, document.getElementById('voiceCancelBtn'))) { cancelVoice(); }
+}
+function handleVoiceTouchEnd(e) {
+if (!voiceRecorder || voiceRecorder.state !== 'recording') return;
+const t = (e.changedTouches && e.changedTouches[0]) || null;
+if (!t) return;
+const x = t.clientX, y = t.clientY;
+if (isPointOverEl(x, y, document.getElementById('voiceSendBtn'))) { stopVoiceRecording(true); }
+else if (isPointOverEl(x, y, document.getElementById('voiceCancelBtn'))) { cancelVoice(); }
+}
+// کلیک/تاچ معمولی روی دکمه‌های پنل ضبط (حالت ضربه‌ای): ارسال یا لغو
+(function bindVoiceUiClicks() {
+const initVc = () => {
+const vsb = document.getElementById('voiceSendBtn');
+const vcb = document.getElementById('voiceCancelBtn');
+if (vsb) vsb.addEventListener('click', (ev) => { ev.stopPropagation(); if (voiceRecorder && voiceRecorder.state === 'recording') stopVoiceRecording(true); });
+if (vcb) vcb.addEventListener('click', (ev) => { ev.stopPropagation(); cancelVoice(); });
+};
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initVc);
+else initVc();
+})();
 async function uploadVoice(blob, duration, samples) {
 if (!currentChat) return;
 const file = new File([blob], 'voice_' + Date.now() + '.webm', {type: blob.type || 'audio/webm'});
