@@ -1490,7 +1490,7 @@ body{background:var(--bg);color:var(--t1);transition:background .35s,color .35s}
 .wallet-actions{display:flex;gap:8px;margin-top:12px}
 .wallet-actions .btn{flex:1}
 .transfer-history{max-height:150px;overflow-y:auto;margin-top:12px;padding:8px;background:var(--input);border-radius:12px;border:1px solid var(--border)}
-.wallet-fab{position:fixed;top:18px;right:18px;width:64px;height:64px;border-radius:50%;background:linear-gradient(145deg,#34d399,#059669);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:28px;z-index:90;box-shadow:0 10px 30px rgba(16,185,129,.45);transition:.25s}
+.wallet-fab{position:fixed;top:18px;right:18px;width:64px;height:64px;border-radius:16px;background:linear-gradient(145deg,#34d399,#059669);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:28px;z-index:90;box-shadow:0 10px 30px rgba(16,185,129,.45);transition:.25s}
 .wallet-fab:hover{transform:translateY(-3px) scale(1.06)}
 @media (max-width:768px){.wallet-fab{top:12px;right:12px;width:56px;height:56px;font-size:24px}}
 .wallet-page{position:fixed;inset:0;z-index:95;background:var(--bg);display:none;flex-direction:column;animation:walletPageIn .3s ease}
