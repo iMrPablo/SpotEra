@@ -14,6 +14,7 @@ define('CONFIG_FILE', DATA_DIR . '/config.json');
 define('CHATS_FILE', DATA_DIR . '/chats.json');
 define('READS_FILE', DATA_DIR . '/reads.json');
 define('WALLET_CONFIG_FILE', DATA_DIR . '/wallet_config.json');
+define('WALLET_HISTORY_FILE', DATA_DIR . '/wallet_history.json');
 define('UPLOADS_DIR', DATA_DIR . '/uploads');
 define('AVATARS_DIR', DATA_DIR . '/avatars');
 define('NORMAL_MAX_UPLOAD_MB', 200);
@@ -40,6 +41,15 @@ function get_wallet_config() {
     }
     $data = read_json(WALLET_CONFIG_FILE);
     return !empty($data) ? $data : ['spc_to_toman' => 1000];
+}
+function add_wallet_history_entry($user_id, $entry) {
+    $history = read_json(WALLET_HISTORY_FILE);
+    if (!isset($history[$user_id])) $history[$user_id] = [];
+    $entry['id'] = generate_id();
+    $entry['created_at'] = time();
+    array_unshift($history[$user_id], $entry);
+    if (count($history[$user_id]) > 200) $history[$user_id] = array_slice($history[$user_id], 0, 200);
+    write_json(WALLET_HISTORY_FILE, $history);
 }
 function safe_user($u) {
     $premium = is_premium_user($u);
@@ -800,6 +810,8 @@ if (isset($_GET['action'])) {
             }
             unset($u);
             if ($changed) write_json(USERS_FILE, $users);
+            add_wallet_history_entry($user['id'], ['type' => 'out', 'amount' => $amount, 'with_username' => $target['username'], 'with_name' => $target['name'] ?? '', 'balance_after' => ($user['wallet_balance'] ?? 0) - $amount, 'note' => 'انتقال SPC']);
+            add_wallet_history_entry($target['id'], ['type' => 'in', 'amount' => $amount, 'with_username' => $user['username'], 'with_name' => $user['name'] ?? '', 'balance_after' => ($target['wallet_balance'] ?? 0) + $amount, 'note' => 'دریافت SPC']);
             echo json_encode(['success' => true, 'new_balance' => ($user['wallet_balance'] ?? 0) - $amount, 'message' => 'انتقال ' . $amount . ' SPC به ' . $target['username'] . ' با موفقیت انجام شد'], JSON_UNESCAPED_UNICODE);
             exit;
         case 'admin_get_stats':
@@ -1006,7 +1018,16 @@ if (isset($_GET['action'])) {
             }
             unset($u);
             write_json(USERS_FILE, $users);
+            if ($amount > 0 || $action_type === 'set') {
+                $htype = ($action_type === 'subtract') ? 'out' : 'in';
+                add_wallet_history_entry($target_id, ['type' => $htype, 'amount' => $amount, 'with_username' => $user['username'], 'with_name' => $user['name'] ?? '', 'balance_after' => $new_balance, 'note' => 'تنظیم توسط مدیر (' . $action_type . ')']);
+            }
             echo json_encode(['success' => true, 'new_balance' => $new_balance]);
+            exit;
+        case 'get_wallet_history':
+            $history = read_json(WALLET_HISTORY_FILE);
+            $wallet_config = get_wallet_config();
+            echo json_encode(['success' => true, 'history' => $history[$user['id']] ?? [], 'balance' => $user['wallet_balance'] ?? 0, 'spc_to_toman' => $wallet_config['spc_to_toman']], JSON_UNESCAPED_UNICODE);
             exit;
         case 'admin_create_user':
             if (!is_admin_user($user)) { echo json_encode(['error' => 'دسترسی غیرمجاز است']); exit; }
@@ -1469,6 +1490,41 @@ body{background:var(--bg);color:var(--t1);transition:background .35s,color .35s}
 .wallet-actions{display:flex;gap:8px;margin-top:12px}
 .wallet-actions .btn{flex:1}
 .transfer-history{max-height:150px;overflow-y:auto;margin-top:12px;padding:8px;background:var(--input);border-radius:12px;border:1px solid var(--border)}
+.wallet-fab{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);width:64px;height:64px;border-radius:50%;background:linear-gradient(145deg,#34d399,#059669);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:28px;z-index:90;box-shadow:0 10px 30px rgba(16,185,129,.45);transition:.25s}
+.wallet-fab:hover{transform:translateX(-50%) translateY(-3px) scale(1.06)}
+.wallet-page{position:fixed;inset:0;z-index:95;background:var(--bg);display:none;flex-direction:column;animation:walletPageIn .3s ease}
+.wallet-page.active{display:flex}
+@keyframes walletPageIn{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+.wallet-page-head{display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid var(--border);background:var(--panel);backdrop-filter:blur(24px)}
+.wallet-page-head h3{font-size:17px;font-weight:800;margin:0;flex:1}
+.wallet-page-body{flex:1;overflow-y:auto;padding:18px;min-height:0}
+.wallet-page-inner{max-width:640px;margin:0 auto}
+.wallet-balance-big{font-size:34px;font-weight:800;color:var(--spc-green);text-align:center;padding:18px 0 6px}
+.wallet-balance-big small{font-size:16px;color:var(--t2);font-weight:500}
+.wallet-toman-big{font-size:14px;color:var(--t2);text-align:center;margin-bottom:16px}
+.wallet-stats-row{display:flex;gap:10px;margin-bottom:16px}
+.wallet-stat{flex:1;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px;text-align:center}
+.wallet-stat b{display:block;font-size:17px;margin-bottom:2px}
+.wallet-stat span{font-size:11.5px;color:var(--t2)}
+.wallet-stat.in b{color:var(--spc-green)}
+.wallet-stat.out b{color:var(--danger)}
+.history-list{display:flex;flex-direction:column;gap:8px}
+.history-item{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px 14px}
+.history-icon{width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0}
+.history-item.in .history-icon{background:rgba(16,185,129,.14)}
+.history-item.out .history-icon{background:rgba(255,107,107,.12)}
+.history-info{flex:1;min-width:0}
+.history-title{font-size:13.5px;font-weight:700;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.history-meta{font-size:11.5px;color:var(--t2)}
+.history-amount{text-align:center;flex-shrink:0}
+.history-amount b{display:block;font-size:14.5px;direction:ltr}
+.history-item.in .history-amount b{color:var(--spc-green)}
+.history-item.out .history-amount b{color:var(--danger)}
+.history-amount span{font-size:10.5px;color:var(--t2);direction:ltr;display:inline-block}
+.history-empty{text-align:center;color:var(--t2);padding:40px 10px;font-size:14px}
+@media (max-width:768px){
+.wallet-fab{bottom:18px;width:58px;height:58px;font-size:25px}
+}
 @media (max-width:768px){
 .app{padding:0;gap:0}
 .sidebar{width:100%;position:absolute;inset:0;z-index:10;border-radius:0;border:none}
@@ -1485,6 +1541,19 @@ body{background:var(--bg);color:var(--t1);transition:background .35s,color .35s}
 </head>
 <body data-theme="dark">
 <div class="bg-scene"><div class="blob blob-1"></div><div class="blob blob-2"></div></div>
+<button class="wallet-fab" id="walletFab" onclick="openWalletPage()" title="کیف پول">💰</button>
+<div class="wallet-page" id="walletPage">
+<div class="wallet-page-head">
+<button class="icon-btn" onclick="closeWalletPage()" title="بازگشت">⬅️</button>
+<h3>💳 کیف پول SPC</h3>
+<button class="icon-btn" onclick="loadWalletHistory()" title="بروزرسانی">🔄</button>
+</div>
+<div class="wallet-page-body">
+<div class="wallet-page-inner" id="walletPageContent">
+<div style="text-align:center;color:var(--t2);padding:30px">در حال بارگذاری...</div>
+</div>
+</div>
+</div>
 <div class="app" id="app">
 <div class="sidebar">
 <div class="sidebar-header">
@@ -3484,11 +3553,86 @@ showToast(data.message);
 currentUser.wallet_balance = data.new_balance;
 closeModal('transferModal');
 renderWalletSection();
+if (document.getElementById('walletPage').classList.contains('active')) loadWalletHistory();
 } catch (e) {
 showToast('خطا در انتقال');
 }
 }
 document.getElementById('transferAmount')?.addEventListener('input', updateTransferPreview);
+let walletHistoryData = [];
+async function openWalletPage() {
+document.getElementById('walletPage').classList.add('active');
+await loadWalletHistory();
+}
+function closeWalletPage() {
+document.getElementById('walletPage').classList.remove('active');
+}
+async function loadWalletHistory() {
+const content = document.getElementById('walletPageContent');
+try {
+const res = await fetch('?action=get_wallet_history');
+const data = await res.json();
+if (data.error) { showToast(data.error); closeWalletPage(); return; }
+walletHistoryData = data.history || [];
+currentUser.wallet_balance = data.balance;
+spcToToman = data.spc_to_toman;
+renderWalletSection();
+renderWalletPage(data);
+} catch (e) {
+content.innerHTML = '<div class="history-empty">⚠️ خطا در بارگذاری تاریخچه</div>';
+showToast('خطا در بارگذاری کیف پول');
+}
+}
+function renderWalletPage(data) {
+const content = document.getElementById('walletPageContent');
+const balance = data.balance || 0;
+const history = data.history || [];
+const totalIn = history.filter(h => h.type === 'in').reduce((s, h) => s + (h.amount || 0), 0);
+const totalOut = history.filter(h => h.type === 'out').reduce((s, h) => s + (h.amount || 0), 0);
+const historyHtml = history.length === 0 ? '<div class="history-empty">📭 تراکنشی وجود ندارد</div>' : '<div class="history-list">' + history.map(h => {
+const isIn = h.type === 'in';
+const icon = isIn ? '⬇️' : '⬆️';
+const title = isIn ? 'واریز SPC' : 'برداشت SPC';
+const counterparty = h.with_username ? '@' + escapeHtml(h.with_username) : '';
+const note = h.note ? escapeHtml(h.note) : '';
+return `<div class="history-item ${isIn ? 'in' : 'out'}">
+<div class="history-icon">${icon}</div>
+<div class="history-info">
+<div class="history-title">${title}${counterparty ? ' ' + (isIn ? 'از' : 'به') + ' ' + counterparty : ''}</div>
+<div class="history-meta">🕐 ${formatDateTime(h.created_at)}${note ? ' • ' + note : ''}</div>
+</div>
+<div class="history-amount">
+<b>${isIn ? '+' : '-'}${formatNumber(h.amount || 0)} SPC</b>
+<span>موجودی: ${formatNumber(h.balance_after || 0)}</span>
+</div>
+</div>`;
+}).join('') + '</div>';
+content.innerHTML = `
+<div class="wallet-card" style="margin-bottom:16px">
+<div class="wallet-card-content">
+<div class="wallet-card-head">
+<span style="font-size:28px">💰</span>
+<h4>موجودی کیف پول</h4>
+</div>
+<div class="wallet-balance-big">${formatNumber(balance)} <small>SPC</small></div>
+<div class="wallet-toman-big">≈ ${formatToman(balance * spcToToman)}</div>
+<div class="premium-info-row">
+<span class="premium-info-label">💱 نرخ تبدیل</span>
+<span class="premium-info-value">1 SPC = ${formatNumber(spcToToman)} تومان</span>
+</div>
+<div class="wallet-actions">
+<button class="btn btn-spc" onclick="openTransferModal()">💸 انتقال SPC</button>
+</div>
+</div>
+</div>
+<div class="wallet-stats-row">
+<div class="wallet-stat in"><b>+${formatNumber(totalIn)}</b><span>کل واریز (SPC)</span></div>
+<div class="wallet-stat out"><b>-${formatNumber(totalOut)}</b><span>کل برداشت (SPC)</span></div>
+</div>
+<div class="section-title spc">🧾 تاریخچه تراکنش‌ها</div>
+${historyHtml}
+`;
+}
 function renderPremiumSettings() {
 if (!currentUser.premium) return '';
 const selectedColor = selectedPremiumColor || '';
